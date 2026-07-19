@@ -1,4 +1,4 @@
-# battery-dv-report-review
+# product-dv-report-review
 
 产品验证（DV，设计验证）测试报告通用审核 Skill，适用于电池包等各类产品的 DV/型式试验报告。适用于 **GitHub Copilot CLI** 与 **OpenCode**（以及任何支持 Agent Skills 开放标准的工具）。
 
@@ -17,13 +17,13 @@
 ## 快速上手（新成员 5 分钟）
 
 1. **确认环境**：公司电脑装有 Python 3（`python --version` 能看到版本号即可，无需联网装任何包）；GitHub Copilot CLI 或 OpenCode 已配置可用。
-2. **获取本 skill**：从团队共享渠道拿到 `battery-dv-report-review/` 文件夹（git 仓库 / 共享盘 / 压缩包均可）。
+2. **获取本 skill**：从团队共享渠道拿到 `product-dv-report-review/` 文件夹（git 仓库 / 共享盘 / 压缩包均可）。
 3. **部署**：在文件夹中执行
    ```powershell
    powershell -ExecutionPolicy Bypass -File deploy.ps1
    ```
-   会复制到 `~/.agents/skills/battery-dv-report-review/`，Copilot CLI 和 OpenCode 都能自动发现。
-4. **验证部署**：打开 copilot 或 opencode，问「你有哪些可用的 skill？」—— 列表里出现 `battery-dv-report-review` 即成功。
+   会复制到 `~/.agents/skills/product-dv-report-review/`，Copilot CLI 和 OpenCode 都能自动发现。
+4. **验证部署**：打开 copilot 或 opencode，问「你有哪些可用的 skill？」—— 列表里出现 `product-dv-report-review` 即成功。
 5. **第一次审核**：把一份报告拖进来，说「审核这份 DV 测试报告」。
 
 > 想先练手？用内置模拟报告（植入了 15 个典型缺陷）体验完整流程，见文末「自验证」。
@@ -148,7 +148,7 @@
 
 ## 团队共享与更新
 
-- **分发给同事**：把整个 `battery-dv-report-review/` 文件夹放共享盘或 git 仓库（`.venv/` 无需分发），同事按「快速上手」执行即可。
+- **分发给同事**：把整个 `product-dv-report-review/` 文件夹放共享盘或 git 仓库（`.venv/` 无需分发），同事按「快速上手」执行即可。
 - **统一维护**：审核清单、缺陷库、模板档案、标准矩阵的修改集中在一份主拷贝上，改完通知团队各自重跑 `deploy.ps1` 同步。
 - **数据安全**：脚本本地运行；报告内容经企业批准的模型通道处理。客户标准矩阵注意密级，登记前确认允许被 AI 工具读取。
 
