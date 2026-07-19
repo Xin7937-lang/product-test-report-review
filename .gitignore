@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+# 审核产物与模拟报告
+*.extracted.md
+*.checks.md
+*.review.md
+batch-review-summary.md
+tests/*.docx
+tests/*.pptx
+_px.png
