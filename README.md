@@ -1,6 +1,6 @@
 # battery-dv-report-review
 
-电池包 DV（设计验证）测试报告审核 Skill。适用于 **GitHub Copilot CLI** 与 **OpenCode**（以及任何支持 Agent Skills 开放标准的工具）。
+产品验证（DV，设计验证）测试报告通用审核 Skill，适用于电池包等各类产品的 DV/型式试验报告。适用于 **GitHub Copilot CLI** 与 **OpenCode**（以及任何支持 Agent Skills 开放标准的工具）。
 
 把报告（Word/PPT）交给 AI，按内置审核清单自动检查文档合规性与数据逻辑一致性，输出带证据位置的分级审核报告。**AI 辅助，人工终判。**
 
