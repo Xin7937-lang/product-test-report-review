@@ -21,10 +21,12 @@
 ├── references/                 # 审核依据（模型按需读取）
 │   ├── checklist-doc-compliance.md   # 文档合规性清单（含 PPT 特定项）
 │   ├── checklist-data-logic.md       # 数据逻辑清单
+│   ├── checklist-auto-hints.md       # 自动化分工提示（哪些条目脚本已覆盖）
 │   ├── common-defects.md             # 常见缺陷库（CD-S/G/J 编号）
 │   ├── review-output-template.md     # 单份审核报告输出模板
 │   ├── batch-summary-template.md     # 批量审核汇总模板
 │   ├── report-template-profile.md    # 公司报告模板档案（填写后生效）
+│   ├── standards-active.md           # 现行标准年号表（CHECK-6 用，团队维护）
 │   └── standards/                    # 客户/企业标准矩阵（自行登记，见其中 README）
 ├── scripts/
 │   ├── extract_report.py       # .docx/.pptx → 带定位索引的纯文本（仅标准库）
@@ -89,7 +91,9 @@ D:\reports\
 帮我检查 D:\reports\xxx项目DV汇报.pptx 有没有问题
 ```
 
-与 Word 流程相同，额外检查 PPT 特定项：页码/版本标识、图表数据来源标注、图片页（自动标记转人工核对）；若同项目 Word 报告也在，会交叉核对两份关键数据是否一致。
+与 Word 流程相同，额外检查 PPT 特定项：页码/版本标识、图表数据来源标注、图片页（自动标记转人工核对）；若同项目 Word 报告也在，会自动运行跨报告对照（`--pair`）核对两份的判定结果与样品编号是否一致。页数很多（>30 页）的 PPT 会自动分段提取。
+
+**批量模式踩坑**：① 每份完成会在对话里报一行进度（n/N）；② 单份失败（损坏/加密/旧格式）会被记录并跳过，不影响整批，失败清单进汇总；③ 中断了直接说"继续"，已有 `.review.html` 的报告会自动跳过。
 
 ### 场景 3：批量审核一个文件夹
 
@@ -190,7 +194,7 @@ D:\reports\
 
 ## 维护
 
-- 标准年号核查表在 `scripts/report_checks.py` 顶部的 `KNOWN_CURRENT` / `SOFT_WARN`，按公司现行标准清单定期更新
+- 标准年号核查表在 `references/standards-active.md`（KNOWN_CURRENT / SOFT_WARN 两节），按公司现行标准清单定期更新，改完重跑 `deploy.ps1` 即生效，无需改源码
 - 新发现的典型缺陷补充进 `references/common-defects.md`（缺陷库越滚越准）
 - 公司报告模板要求维护在 `references/report-template-profile.md`
 

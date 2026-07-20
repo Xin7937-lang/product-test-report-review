@@ -169,9 +169,17 @@ def _pptx_shape_lines(el, sid, counters, flags):
         paras = [''.join(t.text or '' for t in p.iter(A + 't'))
                  for p in el.iter(A + 'p')]
         text = _clean('；'.join(x for x in paras if x.strip()))
+        ph = el.find(f'./{P}nvSpPr/{P}nvPr/{P}ph')
+        ph_type = ph.get('type', '') if ph is not None else ''
+        label = {'sldNum': '页码字段', 'ftr': '页脚', 'dt': '日期字段'}.get(ph_type, '')
         if text:
             counters['shape'] += 1
-            lines.append(f"[S{sid:02d}-{counters['shape']}] {text}")
+            prefix = f'[{label}] ' if label else ''
+            lines.append(f"[S{sid:02d}-{counters['shape']}] {prefix}{text}")
+        elif label:
+            # 页码/页脚/日期占位符存在但无缓存文本——对 DC-P01 仍是有效信息
+            counters['shape'] += 1
+            lines.append(f"[S{sid:02d}-{counters['shape']}] [{label}]（无文本内容）")
     elif tag == P + 'pic':
         counters['shape'] += 1
         flags.append(sid)
@@ -204,15 +212,21 @@ def _pptx_shape_lines(el, sid, counters, flags):
     return lines
 
 
-def extract_pptx(path):
+def extract_pptx(path, slide_range=None):
     out, flags, n_tables = [], [], 0
     with zipfile.ZipFile(path) as zf:
         slides = sorted((n for n in zf.namelist()
                          if re.match(r'ppt/slides/slide\d+\.xml$', n)),
                         key=_slide_sort_key)
+        total = len(slides)
+        if slide_range:
+            lo, hi = slide_range
+            slides = [s for s in slides if lo <= _slide_sort_key(s) <= hi]
         if not slides:
-            raise SystemExit('错误：文件不含 ppt/slides/，不是有效的 .pptx'
+            raise SystemExit('错误：文件不含 ppt/slides/ 或指定页码范围为空'
                              '（若为旧版 .ppt 请先用 PowerPoint 另存为 .pptx）')
+        if slide_range:
+            out.append(f"> 分段提取：第 {slide_range[0]}-{slide_range[1]} 页（全文共 {total} 页）")
         for slide_name in slides:
             sid = _slide_sort_key(slide_name)
             root = ET.fromstring(zf.read(slide_name))
@@ -238,18 +252,24 @@ def main(argv):
     if len(argv) < 2:
         raise SystemExit(__doc__)
     src = argv[1]
-    out_path, to_stdout = None, False
+    out_path, to_stdout, slide_range = None, False, None
     args = argv[2:]
     if '-o' in args:
         out_path = args[args.index('-o') + 1]
     if '--stdout' in args:
         to_stdout = True
+    if '--slides' in args:
+        m = re.match(r'^(\d+)(?:\s*[-~]\s*(\d+))?$',
+                     args[args.index('--slides') + 1])
+        if not m:
+            raise SystemExit('错误：--slides 格式应为 起-止（如 1-10）或单页（如 5）')
+        slide_range = (int(m.group(1)), int(m.group(2) or m.group(1)))
 
     ext = os.path.splitext(src)[1].lower()
     if ext == '.docx':
         lines, stats = extract_docx(src)
     elif ext == '.pptx':
-        lines, stats = extract_pptx(src)
+        lines, stats = extract_pptx(src, slide_range)
     else:
         raise SystemExit(f'错误：不支持的格式 {ext}（仅支持 .docx / .pptx；'
                          '旧版 .doc/.ppt 请先另存为新格式）')

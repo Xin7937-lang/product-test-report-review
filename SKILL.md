@@ -26,9 +26,9 @@ Markdown 版审核报告（`.review.md`）只是生成 HTML 的中间步骤，**
 
 严格按以下步骤执行，不要跳步：
 
-1. **提取文本**：运行 `python scripts/extract_report.py <报告文件>`（脚本路径相对于本 SKILL.md 所在目录），生成临时的 `<报告文件名>.extracted.md`。
+1. **提取文本**：运行 `python scripts/extract_report.py <报告文件>`（脚本路径相对于本 SKILL.md 所在目录），生成临时的 `<报告文件名>.extracted.md`。PPT 页数很多（>30 页）时用 `--slides 1-30` 等参数分段提取、逐段审核。
 2. **确定性检查**：运行 `python scripts/report_checks.py <上一步的 .extracted.md>`，生成 `<报告文件名>.workpaper.md`（检查线索与提取全文合并为单一工作稿，`.extracted.md` 并入后自动删除）。若 `references/report-template-profile.md` 已填写必备章节（存在非"（示例）"条目），追加 `--template references/report-template-profile.md` 参数。
-3. **语义审核**：阅读 `.workpaper.md`，对照 `references/checklist-doc-compliance.md` 与 `references/checklist-data-logic.md` 逐条核对。报告较长时可分章节读，但封面、样品信息、汇总表、结论四处必须完整阅读。
+3. **语义审核**：先读 `references/checklist-auto-hints.md` 明确分工——脚本已覆盖的条目直接甄别线索即可，把精力放在纯语义条目（判定方向、临界值、结论逻辑等）。然后阅读 `.workpaper.md`，对照 `references/checklist-doc-compliance.md` 与 `references/checklist-data-logic.md` 逐条核对。报告较长时可分章节读，但封面、样品信息、汇总表、结论四处必须完整阅读。
 4. **覆盖度核查**：若 `references/standards/` 下存在适用于该报告客户/项目的标准矩阵（非 `_` 开头的文件），逐项核对试验项目覆盖情况，标记"大纲有、报告无"的漏项。没有适用矩阵时跳过本步并在输出中说明。
 5. **输出审核报告**：
    a. 按 `references/review-output-template.md` 的格式写 `<报告文件名>.review.md`（保存到报告同目录），并将工作稿中的脚本线索甄别后纳入（线索需经你核实，不是直接照抄）；
@@ -38,6 +38,7 @@ Markdown 版审核报告（`.review.md`）只是生成 HTML 的中间步骤，**
 ## 可选输入（用户提供或配置后启用）
 
 - **公司报告模板**：`references/report-template-profile.md` 填写后生效。步骤 2 的脚本用 `--template` 检查必备章节缺失；步骤 3 再对照档案中的"必备要素"与"章节顺序要求"做语义核对，发现归入"一般"级。
+- **同项目 Word + PPT 并存**：两份都完成步骤 1-2 后，运行 `python scripts/report_checks.py --pair <A.workpaper.md> <B.workpaper.md>` 生成 `pair-checks.md`（判定不一致、样品编号交集），结果用于 DC-P05 核对；剩余的呈现层一致性（图表来源、失效描述）仍由你语义比对。
 - **同类项目参考报告**：用户另给 1~2 份其它项目的同类报告作参考时，先对其执行步骤 1 提取，抽取其判定准则与试验条件作为对照基线。受审报告与基线的差异列 ⚠️（"一般"级），只呈现差异，不判定对错。
 - **测试方法/标准条款**：纳入 `references/standards/` 矩阵的"试验条件要点"列（见 `standards/README.md`），审核时按 DL-A06 对照，不做方法对错判定。
 
@@ -47,8 +48,10 @@ Markdown 版审核报告（`.review.md`）只是生成 HTML 的中间步骤，**
 
 1. 列出范围内全部 `.docx`/`.pptx`，向用户确认清单后再开始。
 2. **逐份处理**：一份完整执行单份五步流程并输出后，再处理下一份。不要把多份报告的工作稿同时读入上下文。
-3. 每份产出 `.workpaper.md` + `.review.html`（review.md 默认转换后删除），全部存到被审核文件夹内（用户另有指定除外）；对话内只报该份的总体评价与严重发现摘要。
-4. 全部完成后，按 `references/batch-summary-template.md` 写 `batch-review-summary.md`，并运行 `make_html_report.py`（默认加 `--rm`）生成 `batch-review-summary.html`，在对话内展示"各报告结论一览"与"严重问题清单"两节。
+3. 每份产出 `.workpaper.md` + `.review.html`（review.md 默认转换后删除），全部存到被审核文件夹内（用户另有指定除外）；对话内只报一行进度（n/N + 总体评价）。
+4. **失败隔离**：某份报告提取失败（损坏/加密/旧格式）时，记录文件名与原因，跳过继续下一份，并在批量汇总中列出失败清单；不得因单份失败中断整批。
+5. **中断恢复**：批量被中断后，用户说"继续"时先检查各报告是否已有 `.review.html`，已有的视为完成直接跳过，只处理剩余报告。
+6. 全部完成后，按 `references/batch-summary-template.md` 写 `batch-review-summary.md`，并运行 `make_html_report.py`（默认加 `--rm`）生成 `batch-review-summary.html`，在对话内展示"各报告结论一览"与"严重问题清单"两节。
 
 ## 审核原则（铁律）
 
@@ -68,12 +71,14 @@ Markdown 版审核报告（`.review.md`）只是生成 HTML 的中间步骤，**
 
 | 文件 | 何时读 |
 |---|---|
+| `references/checklist-auto-hints.md` | 步骤 3 开头必读（自动化分工） |
 | `references/checklist-doc-compliance.md` | 步骤 3 必读 |
 | `references/checklist-data-logic.md` | 步骤 3 必读 |
 | `references/common-defects.md` | 步骤 3 参考，用于比对高频缺陷 |
 | `references/review-output-template.md` | 步骤 5a 必读（单份） |
 | `references/batch-summary-template.md` | 批量模式收尾时必读 |
 | `references/report-template-profile.md` | 模板检查启用时读（步骤 2/3） |
+| `references/standards-active.md` | 维护现行标准年号表时编辑（脚本自动读取） |
 | `references/standards/README.md` | 需要登记新客户标准时读 |
 
 ## 环境说明

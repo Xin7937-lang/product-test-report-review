@@ -8,6 +8,7 @@
 
 用法：
   python report_checks.py <报告.extracted.md | 报告.docx | 报告.pptx> [--template 模板档案路径] [--keep-extracted]
+  python report_checks.py --pair <A.workpaper.md> <B.workpaper.md>   # 同项目两份报告关键数据对照（DC-P05）
 """
 import datetime
 import os
@@ -19,13 +20,43 @@ ANCHOR_RE = re.compile(r'\[(P\d{4}|T\d{2}|S\d{2}(?:-[A-Za-z0-9]+)?|[HF]\d+)\]')
 
 DATE_RE = re.compile(r'(20\d{2})\s*[年\-/\.]\s*(\d{1,2})\s*[月\-/\.]\s*(\d{1,2})\s*日?')
 
-# 标准年号核查：确定现行有效的放 KNOWN_CURRENT；引用需确认的放 SOFT_WARN。
-# ⚠️ 请按公司现行有效标准清单定期维护这两张表。
-KNOWN_CURRENT = {'GB 38031': '2020'}
-SOFT_WARN = {
+# 标准年号核查：现行有效表与提示表外置在 references/standards-active.md
+# （团队按公司标准受控清单维护，改完重新部署即生效，无需改源码）。
+# 下列为文件缺失时的内置兜底值。
+_DEFAULT_KNOWN_CURRENT = {'GB 38031': '2020'}
+_DEFAULT_SOFT_WARN = {
     'GB/T 31485': '其安全要求内容已并入 GB 38031-2020，引用前请确认客户/DV大纲要求',
     'GB/T 31486': '其电性能要求内容已并入 GB 38031-2020，引用前请确认客户/DV大纲要求',
 }
+
+
+def _load_standards_ref():
+    """读取 references/standards-active.md；文件缺失或无可解析条目时用内置兜底。"""
+    known, soft = dict(_DEFAULT_KNOWN_CURRENT), dict(_DEFAULT_SOFT_WARN)
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        '..', 'references', 'standards-active.md')
+    try:
+        with open(path, encoding='utf-8') as f:
+            tlines = f.read().splitlines()
+    except OSError:
+        return known, soft
+    section = ''
+    for l in tlines:
+        s = l.strip()
+        if s.startswith('## '):
+            section = s[3:].strip()
+            continue
+        m = re.match(r'-\s+(.+?)\s*[:：]\s*(.+?)\s*$', s)
+        if m and '（示例）' not in s:
+            if section == 'KNOWN_CURRENT':
+                known[m.group(1)] = m.group(2)
+            elif section == 'SOFT_WARN':
+                soft[m.group(1)] = m.group(2)
+    return known, soft
+
+
+# 运行时在 main() 中由 _load_standards_ref() 填充
+STD_REFS = {'known': dict(_DEFAULT_KNOWN_CURRENT), 'soft': dict(_DEFAULT_SOFT_WARN)}
 
 STD_RE = re.compile(r'\b(GB/T|GB|QC/T|ISO|IEC|UL|EN|SAE)\s*(\d+(?:\.\d+)*)\s*[-—–]\s*(\d{4})\b')
 
@@ -288,13 +319,13 @@ def check_standards(lines):
             detail = '、'.join(f'{y}({loc})' for y, loc in sorted(years.items()))
             out.append(('中', '/'.join(years.values()),
                         f'同一标准 {key} 年号不一致：{detail}（CD-G02）'))
-        cur = KNOWN_CURRENT.get(key)
+        cur = STD_REFS['known'].get(key)
         for y, loc in years.items():
             if cur and y != cur:
                 out.append(('中', loc,
                             f'{key}-{y} 可能为作废版本（现行 {cur}，请按公司标准清单核实）（CD-G01）'))
-        if key in SOFT_WARN:
-            out.append(('低', next(iter(years.values())), f'{key}：{SOFT_WARN[key]}'))
+        if key in STD_REFS['soft']:
+            out.append(('低', next(iter(years.values())), f'{key}：{STD_REFS["soft"][key]}'))
     return out
 
 
@@ -331,6 +362,59 @@ def check_template(lines, template_path):
             for kw in required if kw.lower() not in text]
 
 
+# ------------------------------------------------------------- --pair ----
+def _judgement_map(lines):
+    """从判定汇总表提取 {试验项目: (判定, 位置)}。"""
+    result = {}
+    for loc, header, rows in _parse_tables(lines):
+        col_j = next((k for k, c in enumerate(header) if re.search(r'判定|结论', c)), None)
+        col_p = next((k for k, c in enumerate(header) if re.search(r'项目|名称', c)), None)
+        if col_j is None or col_p is None:
+            continue
+        for r in rows:
+            if col_p >= len(r) or col_j >= len(r):
+                continue
+            name, cell = r[col_p].strip(), r[col_j].strip()
+            if not name:
+                continue
+            if re.search(r'不合格|不通过|不符合|Fail|FAIL|NG', cell):
+                v = '不合格'
+            elif re.search(r'合格|通过|符合|PASS|Pass|OK', cell):
+                v = '合格'
+            else:
+                v = cell or '（空）'
+            result[name] = (v, loc)
+    return result
+
+
+def check_pair(path_a, path_b):
+    """同项目两份报告（如 Word 报告 + PPT 汇报）关键数据对照（DC-P05）。"""
+    def rd(p):
+        with open(p, encoding='utf-8') as f:
+            return f.read().splitlines()
+    la, lb = rd(path_a), rd(path_b)
+    na, nb = os.path.basename(path_a), os.path.basename(path_b)
+    out = []
+    ma, mb = _judgement_map(la), _judgement_map(lb)
+    for name in sorted(set(ma) & set(mb)):
+        va, vb = ma[name][0], mb[name][0]
+        if va != vb:
+            out.append(('高', f'{ma[name][1]}/{mb[name][1]}',
+                        f'判定不一致："{name}" 在 {na} 为"{va}"、{nb} 为"{vb}"（DC-P05/CD-S01）'))
+
+    def sample_ids(lines):
+        ids = set()
+        for line in lines:
+            for m in re.finditer(r'样品编号[:：\s]*([A-Za-z0-9\-_/]{3,})', line):
+                ids.add(m.group(1).upper().replace('-', '').replace('_', ''))
+        return ids
+    sa, sb = sample_ids(la), sample_ids(lb)
+    if sa and sb and not (sa & sb):
+        out.append(('中', '[?]',
+                    f'样品编号无交集：{na} 与 {nb} 疑非同一批样品，请人工确认（DC-P05）'))
+    return out
+
+
 # ---------------------------------------------------------------- main ----
 CHECKS = [('CHECK-1 占位符/待办残留', check_placeholders),
           ('CHECK-2 日期逻辑', None),  # 特殊处理 today
@@ -347,6 +431,21 @@ def main(argv):
         sys.exit(0)
     if len(argv) < 2:
         raise SystemExit(__doc__)
+    if '--pair' in argv:
+        k = argv.index('--pair')
+        if len(argv) < k + 3:
+            raise SystemExit('错误：--pair 需要两个文件参数（.workpaper.md 或 .extracted.md）')
+        pa, pb = argv[k + 1], argv[k + 2]
+        findings = check_pair(pa, pb)
+        out_path = os.path.join(os.path.dirname(os.path.abspath(pa)), 'pair-checks.md')
+        body = '\n'.join(f'- 【{sev}】{loc} {msg}' for sev, loc, msg in findings) or '- 无'
+        content = (f'# 跨报告对照线索（DC-P05）\n\n'
+                   f'> {os.path.basename(pa)}  vs  {os.path.basename(pb)}\n'
+                   f'> 由 report_checks.py --pair 生成，须人工/AI 甄别后纳入审核报告。\n\n{body}\n')
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f'OK: {out_path}  (findings={len(findings)})')
+        return
     src = argv[1]
     ext = os.path.splitext(src)[1].lower()
     if ext in ('.docx', '.pptx'):
@@ -358,6 +457,7 @@ def main(argv):
         lines = f.read().splitlines()
 
     today = datetime.date.today()
+    STD_REFS['known'], STD_REFS['soft'] = _load_standards_ref()
     sections = []
     total = 0
     for name, fn in CHECKS:
