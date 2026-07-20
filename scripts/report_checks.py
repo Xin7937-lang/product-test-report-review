@@ -269,8 +269,8 @@ def check_judgement(lines):
         out.append(('高', '[?]',
                     f'存在 {total_fail} 个不合格项，但报告结论为合格/通过（CD-S01）'))
     if judged_tables:
-        out.append(('低', '[?]',
-                    f'统计信息：判定汇总表 {judged_tables} 个，合格 {total_pass} 项、不合格 {total_fail} 项（供核对）'))
+        out.append(('统计', '[?]',
+                    f'判定汇总表 {judged_tables} 个，合格 {total_pass} 项、不合格 {total_fail} 项（统计事实，非严重度线索，仅供核对）'))
     return out
 
 
@@ -342,6 +342,9 @@ CHECKS = [('CHECK-1 占位符/待办残留', check_placeholders),
 
 
 def main(argv):
+    if len(argv) >= 2 and argv[1] in ('-h', '--help'):
+        print(__doc__)
+        sys.exit(0)
     if len(argv) < 2:
         raise SystemExit(__doc__)
     src = argv[1]
@@ -374,7 +377,7 @@ def main(argv):
     out_path = base + '.workpaper.md'
     content = (f'# 审核工作稿 — {os.path.basename(base)}\n\n'
                f'> 中间产物（合并单文件）。第一部分为自动检查线索（report_checks.py 生成，\n'
-               f'> 确定性规则含启发式判断，可能有误报，【高/中/低】为规则建议严重度，须甄别）；\n'
+               f'> 确定性规则含启发式判断，可能有误报；【高/中/低】为规则建议严重度，【统计】为统计事实不作分级，均须甄别）；\n'
                f'> 第二部分为报告提取全文（extract_report.py 生成，[Pxxxx]/[Txx]/[Sxx] 为证据定位索引）。\n\n'
                f'# 第一部分：自动检查线索\n\n'
                + '\n\n'.join(sections) + f'\n\n---\n共 {total} 条线索。\n\n'

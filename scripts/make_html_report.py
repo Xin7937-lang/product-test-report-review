@@ -157,6 +157,9 @@ def render_markdown(md):
 
 
 def main(argv):
+    if len(argv) >= 2 and argv[1] in ('-h', '--help'):
+        print(__doc__)
+        sys.exit(0)
     if len(argv) < 2:
         raise SystemExit(__doc__)
     src = argv[1]
