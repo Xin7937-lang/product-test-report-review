@@ -3,10 +3,11 @@
 """report_checks.py — 对 extract_report.py 的提取产物做确定性规则检查（仅标准库）。
 
 输入 .extracted.md（或直接给 .docx/.pptx，会先自动调用 extract_report.py）。
-输出 <报告名>.checks.md：分类线索清单。线索仅供审核者甄别，不是定论。
+输出 <报告名>.workpaper.md：合并单文件中间产物 = 自动检查线索 + 提取全文。
+合并后原 .extracted.md 自动删除（--keep-extracted 可保留）。
 
 用法：
-  python report_checks.py <报告.extracted.md | 报告.docx | 报告.pptx> [--template 模板档案路径]
+  python report_checks.py <报告.extracted.md | 报告.docx | 报告.pptx> [--template 模板档案路径] [--keep-extracted]
 """
 import datetime
 import os
@@ -369,13 +370,19 @@ def main(argv):
         body = '\n'.join(f'- 【{sev}】{loc} {msg}' for sev, loc, msg in findings) or '- 无'
         sections.append(f'## CHECK-8 模板必备章节（{len(findings)} 条）\n\n{body}')
 
-    out_path = src.replace('.extracted.md', '') + '.checks.md'
-    content = (f'# 自动检查线索 — {os.path.basename(src)}\n\n'
-               f'> 由 report_checks.py 生成（确定性规则，含启发式判断，可能有误报）。\n'
-               f'> 线索须甄别后纳入审核报告；【高/中/低】为规则建议严重度。\n\n'
-               + '\n\n'.join(sections) + f'\n\n---\n共 {total} 条线索。\n')
+    base = src.replace('.extracted.md', '')
+    out_path = base + '.workpaper.md'
+    content = (f'# 审核工作稿 — {os.path.basename(base)}\n\n'
+               f'> 中间产物（合并单文件）。第一部分为自动检查线索（report_checks.py 生成，\n'
+               f'> 确定性规则含启发式判断，可能有误报，【高/中/低】为规则建议严重度，须甄别）；\n'
+               f'> 第二部分为报告提取全文（extract_report.py 生成，[Pxxxx]/[Txx]/[Sxx] 为证据定位索引）。\n\n'
+               f'# 第一部分：自动检查线索\n\n'
+               + '\n\n'.join(sections) + f'\n\n---\n共 {total} 条线索。\n\n'
+               f'# 第二部分：提取全文\n\n' + '\n'.join(lines) + '\n')
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(content)
+    if '--keep-extracted' not in argv and src.endswith('.extracted.md'):
+        os.remove(src)
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:

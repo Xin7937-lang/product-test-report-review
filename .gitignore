@@ -4,8 +4,11 @@ __pycache__/
 # 审核产物与模拟报告
 *.extracted.md
 *.checks.md
+*.workpaper.md
 *.review.md
+*.review.html
 batch-review-summary.md
+batch-review-summary.html
 tests/*.docx
 tests/*.pptx
 _px.png
