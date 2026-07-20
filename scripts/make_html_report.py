@@ -87,7 +87,20 @@ def _inline(text, badges=True):
 
 
 def _cells(row_line):
-    return [c.strip() for c in row_line.strip().strip('|').split('|')]
+    r"""解析管道表一行单元格，识别 \| 转义；多余列内容合并到末尾单元格。"""
+    s = row_line.strip().strip('|')
+    parts = re.split(r'(?<!\\)\|', s)
+    parts = [p.strip().replace(r'\|', '|') for p in parts]
+    return parts
+
+
+def _align_row(row, ncol):
+    """把任意列数的行规范成 ncol 列：多余列内容合并回最后一列，不足则补空。"""
+    if len(row) > ncol:
+        return row[:ncol - 1] + [' | '.join(row[ncol - 1:])]
+    if len(row) < ncol:
+        return row + [''] * (ncol - len(row))
+    return row
 
 
 def render_markdown(md):
@@ -123,7 +136,7 @@ def render_markdown(md):
             sev_col = next((k for k, c in enumerate(header) if '严重度' in c), None)
             out.append('<table>')
             out.append('<tr>' + ''.join(f'<th>{_inline(c, badges=False)}</th>' for c in header) + '</tr>')
-            for r in data:
+            for r in (_align_row(rr, len(header)) for rr in data):
                 cls = ''
                 if sev_col is not None and sev_col < len(r):
                     cls = _sev_class(r[sev_col])
