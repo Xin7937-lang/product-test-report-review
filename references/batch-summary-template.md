@@ -49,4 +49,4 @@
 - "总体评价"沿用单份报告的三档：通过 / 修改后通过 / 存在严重问题需整改
 - 共性问题聚合以缺陷类别编号（CD-x）或清单条目编号（DC-x/DL-x）归并
 - 任一节无内容时写"无"，不省略章节
-- 写完后运行 `scripts/make_html_report.py` 生成 `batch-review-summary.html`
+- 写完后运行 `scripts/make_html_report.py`（默认加 `--rm`）生成 `batch-review-summary.html` 并删除本 md

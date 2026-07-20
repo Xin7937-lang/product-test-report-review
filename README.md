@@ -59,15 +59,15 @@
 审核一下这份 DV 测试报告：D:\reports\BTR-DV-2025-0042.docx
 ```
 
-**它会做**（自动五步）：提取文本 → 8 类脚本确定性检查（与提取全文合并为单一工作稿 `.workpaper.md`）→ 对照两份清单逐条语义审核 → 覆盖度核查（有标准矩阵时）→ 写出 `.review.md` 并生成带严重度颜色标记的 `.review.html`，**全部保存在报告同目录**。
+**它会做**（自动五步）：提取文本 → 8 类脚本确定性检查（与提取全文合并为单一工作稿 `.workpaper.md`）→ 对照两份清单逐条语义审核 → 覆盖度核查（有标准矩阵时）→ 生成带严重度颜色标记的 `.review.html`（md 源文件默认转换后删除），**产物保存在报告同目录**。
 
-**产物示例**：
+**产物示例**（默认只留两个文件）：
 ```
 D:\reports\
 ├── BTR-DV-2025-0042.docx              ← 原报告
 ├── BTR-DV-2025-0042.docx.review.html  ← 主交付：HTML 审核报告（颜色标记）
-├── BTR-DV-2025-0042.docx.review.md    ← 审核报告源文件
 └── BTR-DV-2025-0042.docx.workpaper.md ← 中间产物（单文件，供溯源）
+（.review.md 仅用于生成 HTML，默认转换后删除；需要 md 版说一声即可）
 ```
 
 **审核报告内容示例**（截自内置模拟报告的真实审核结果）：
@@ -98,7 +98,7 @@ D:\reports\
 批量审核 D:\reports\batch01 这个文件夹里的所有报告
 ```
 
-**它会做**：先列出文件夹内全部 .docx/.pptx 请你确认 → 逐份处理、逐份产出 `.review.md` + `.review.html` + `.workpaper.md`（对话里只报摘要）→ 全部完成后生成 `batch-review-summary.md` 与 `batch-review-summary.html`。
+**它会做**：先列出文件夹内全部 .docx/.pptx 请你确认 → 逐份处理、逐份产出 `.review.html` + `.workpaper.md`（对话里只报摘要）→ 全部完成后生成 `batch-review-summary.html`（md 源文件默认转换后删除）。
 
 **汇总示例**（截自真实批量运行）：
 ```markdown
@@ -166,9 +166,7 @@ D:\reports\
 **5. 如何批量审核？** 给一个文件夹路径即可（场景 3）。
 
 **6. 交付结果是什么样的？**
-单份：报告同目录下 `<报告名>.review.html`（**主交付**：表格排版 + 严重度颜色标记）与 `<报告名>.review.md`（源文件），对话内同步给出摘要。
-批量：每份 review.md/html + `batch-review-summary.md/html` 汇总。
-中间产物：合并为单文件 `<报告名>.workpaper.md`（自动检查线索 + 提取全文，含证据定位索引），保留供溯源。
+单份默认两个文件：`<报告名>.review.html`（**主交付**：表格排版 + 严重度颜色标记）+ `<报告名>.workpaper.md`（中间产物：检查线索 + 提取全文，含证据定位索引，供溯源），均保存在报告同目录。`.review.md` 仅用于生成 HTML，默认转换后删除；需要 md 版（审核报告或批量汇总）时说明即可提供。批量：每份 html + workpaper，外加一份 `batch-review-summary.html` 汇总。
 
 ## 审核输出解读
 

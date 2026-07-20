@@ -8,8 +8,8 @@
   （按 ### 章节名、表头"严重度"列或单元格文本中的严重度词自动着色）
 
 用法：
-  python make_html_report.py <审核报告.md> [-o 输出.html]
-  默认输出到 md 同目录、同名 .html
+  python make_html_report.py <审核报告.md> [-o 输出.html] [--rm]
+  默认输出到 md 同目录、同名 .html；--rm 转换成功后删除源 md（默认交付只留 HTML 时使用）
 """
 import html
 import os
@@ -178,6 +178,8 @@ def main(argv):
             f'AI 辅助审核，结果需工程师复核确认</div>\n</body>\n</html>\n')
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(page)
+    if '--rm' in argv:
+        os.remove(src)
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
