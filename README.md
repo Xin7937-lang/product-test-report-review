@@ -1,212 +1,152 @@
 # product-dv-report-review
 
-产品验证（DV，设计验证）测试报告通用审核 Skill，适用于电池包等各类产品的 DV/型式试验报告。适用于 **GitHub Copilot CLI** 与 **OpenCode**（以及任何支持 Agent Skills 开放标准的工具）。
+产品验证（DV，设计验证）测试报告通用审核 Skill，适用于电池包等各类产品的 DV/型式试验报告与汇报 PPT。适用于 **GitHub Copilot CLI**、**OpenCode** 及其它支持 Agent Skills 的工具。
 
-把报告（Word/PPT）交给 AI，按内置审核清单自动检查文档合规性与数据逻辑一致性，输出**带表格排版与严重度颜色标记的 HTML 审核报告**（严重红 / 一般橙 / 建议蓝 / 人工核对紫）。**AI 辅助，人工终判。**
+核心升级：**分阶段证据提取**、**上下文驱动的中英技术语言复核**、**图/表“应有 vs 实有”清单**、**vision-first / no-vision fallback**、**JSON-first 问题归一化**、**HTML 主交付 + 每份报告独立工件目录**。
 
 | 能做什么 | 不做什么 |
 |---|---|
-| 完整性/一致性/规范性检查（约 50 条清单） | 试验方法的技术对错判定 |
-| 判定结论 vs 数据矛盾、临界值、单位规范 | 图片/扫描件内容识别（转人工核对） |
-| 校准过期、日期倒挂、编号笔误等脚本直查 | 替代工程师的最终判定 |
-| 登记客户标准后：漏项核查、试验条件对照 | 旧版 .doc/.ppt（请先另存为 .docx/.pptx） |
-| 单份审核 + 文件夹批量审核 | |
+| 文档合规性、数据逻辑、图文一致性、中英技术语言检查 | 试验方法技术对错判定 |
+| 先提证据、再判问题；每条发现带预期/实际/摘录/置信度 | 凭猜测给图像页下定论 |
+| 视觉能力可用时优先复核图像；不可用时显式转人工核对 | 静默跳过图片/截图/SmartArt |
+| 单份审核、批量汇总、续跑恢复 | 旧版 `.doc` / `.ppt` |
 
 ---
 
 ## 目录结构
 
 ```
-├── SKILL.md                    # 入口：触发描述 + 审核工作流（单份/批量）
-├── references/                 # 审核依据（模型按需读取）
-│   ├── checklist-doc-compliance.md   # 文档合规性清单（含 PPT 特定项）
-│   ├── checklist-data-logic.md       # 数据逻辑清单
-│   ├── checklist-auto-hints.md       # 自动化分工提示（哪些条目脚本已覆盖）
-│   ├── common-defects.md             # 常见缺陷库（CD-S/G/J 编号）
-│   ├── review-output-template.md     # 单份审核报告输出模板
-│   ├── batch-summary-template.md     # 批量审核汇总模板
-│   ├── report-template-profile.md    # 公司报告模板档案（填写后生效）
-│   ├── standards-active.md           # 现行标准年号表（CHECK-6 用，团队维护）
-│   └── standards/                    # 客户/企业标准矩阵（自行登记，见其中 README）
+├── SKILL.md
+├── references/
+│   ├── checklist-doc-compliance.md
+│   ├── checklist-data-logic.md
+│   ├── checklist-auto-hints.md
+│   ├── common-defects.md
+│   ├── review-output-template.md
+│   ├── batch-summary-template.md
+│   ├── vision-observation-template.json
+│   ├── report-template-profile.md
+│   ├── standards-active.md
+│   └── standards/
 ├── scripts/
-│   ├── extract_report.py       # .docx/.pptx → 带定位索引的纯文本（仅标准库）
-│   ├── report_checks.py        # 8 类确定性检查，输出合并工作稿（仅标准库）
-│   └── make_html_report.py     # 审核报告 md → 带严重度颜色标记的 HTML（仅标准库）
-├── tests/make_mock_reports.py  # 开发期：生成植入缺陷的模拟报告（需 python-docx/pptx）
-└── deploy.ps1                  # 部署到 ~/.agents/skills/
+│   ├── extract_report.py
+│   ├── report_checks.py
+│   ├── evidence_pipeline.py
+│   ├── language_review.py
+│   ├── figure_checks.py
+│   ├── normalize_review.py
+│   ├── render_review.py
+│   └── make_html_report.py       # 兼容旧版 Markdown 审核稿
+├── tests/
+└── deploy.ps1
 ```
 
-## 快速上手（新成员 5 分钟）
+## 默认产物（单份报告）
 
-1. **确认环境**：公司电脑装有 Python 3（`python --version` 能看到版本号即可，无需联网装任何包）；GitHub Copilot CLI 或 OpenCode 已配置可用。
-2. **获取本 skill**：从团队共享渠道拿到 `product-dv-report-review/` 文件夹（git 仓库 / 共享盘 / 压缩包均可）。
-3. **部署**：在文件夹中执行
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File deploy.ps1
-   ```
-   会复制到 `~/.agents/skills/product-dv-report-review/`，Copilot CLI 和 OpenCode 都能自动发现。
-4. **验证部署**：打开 copilot 或 opencode，问「你有哪些可用的 skill？」—— 列表里出现 `product-dv-report-review` 即成功。
-5. **第一次审核**：把一份报告拖进来，说「审核这份 DV 测试报告」。
+每份报告在原文件同目录下生成一个独立工件目录：
 
-> 想先练手？用内置模拟报告（植入了 15 个典型缺陷）体验完整流程，见文末「自验证」。
+```
+D:\reports\
+├── BTR-DV-2025-0042.docx
+├── BTR-DV-2025-0042.docx.review.html
+└── BTR-DV-2025-0042.docx.review-artifacts\
+   ├── BTR-DV-2025-0042.docx.workpaper.md
+   ├── BTR-DV-2025-0042.docx.issues.json
+   ├── evidence.json
+   ├── language-review-input.json
+   ├── figure-review.json
+   └── media\
+```
 
----
+说明：
+- `.review.html` 是**主交付物**，保存在报告同目录。
+- `.workpaper.md` 是保留溯源底稿（自动检查线索 + 提取全文）。
+- `.issues.json` 是归一化问题台账，供批量聚合、续跑恢复和后续统计使用。
+- `evidence.json`、`language-review-input.json`、`figure-review.json` 和 `media\` 用于还原审核证据。
+- `.review.md` / `.extracted.md` 为中间文件，默认在成功后删除。
 
-## 使用指南（按场景）
+## 审核流程（单份）
 
-### 场景 1：审核单份 Word 报告
+1. **提取文本与证据**：`extract_report.py` 保留定位索引；`evidence_pipeline.py` 生成结构化文档单元、上下文、媒体清单和预期/实际图项。
+2. **确定性检查**：`report_checks.py` 保留现有 CHECK-1~CHECK-8，生成 `.workpaper.md`。
+3. **上下文驱动复核**：
+   - 先抽取证据包（封面、样品信息、汇总表、结论、关键图表声明、全部 ⚠️ 图像页）；
+   - 再按 `checklist-doc-compliance.md`、`checklist-data-logic.md`、`common-defects.md` 核对；
+   - 独立做**中英技术语言复核**和**图/表清单 + 图文一致性复核**。
+4. **JSON-first 归一化**：`language_review.py` 准备语言上下文，`figure_checks.py` 检查图项；模型/人工发现经 `normalize_review.py` 归一化。
+5. **HTML 交付**：`render_review.py` 从归一化 JSON 生成 `.review.html`；`make_html_report.py` 保留旧版 Markdown 兼容路径。
 
-**你说**：
+## 视觉策略（重要）
+
+- **vision-first**：如果运行环境能看渲染后的页面、截图或导出图像，图像相关问题优先用视觉复核。
+- **no-vision/manual fallback**：若当前环境无法可靠看图，则图像页、截图页、嵌入图表对象只可进入“人工核对项”；要明确写明原因，不能假装已识别图片内容。
+- 无视觉能力时可提醒用户切换到 GPT-5.6 Luna、GPT-5.6 Terra、GPT-5.6 Sol、Claude Sonnet 5 或 Gemini 3.5 Flash 等视觉模型。
+- 文本脚本仍会把不可机读对象打上 ⚠️ 标记，帮助建立“应有 vs 实有”图表清单。
+
+## 批量审核与续跑
+
+- 每份报告独立生成 `*.review-artifacts\` 子目录，HTML 主交付保存在报告目录。
+- 批量中断后再次运行时：**报告目录存在 `.review.html` 且工件目录同时存在 `.issues.json` 与 `evidence.json` 才算完成**；缺一则继续补齐。
+- 全批完成后，在批次根目录输出 `batch-review-summary.html`（主交付）与相应的中间汇总 md（默认删除）。
+
+## 使用示例
+
+### 单份 Word
+
 ```
 审核一下这份 DV 测试报告：D:\reports\BTR-DV-2025-0042.docx
 ```
 
-**它会做**（自动五步）：提取文本 → 8 类脚本确定性检查（与提取全文合并为单一工作稿 `.workpaper.md`）→ 对照两份清单逐条语义审核 → 覆盖度核查（有标准矩阵时）→ 生成带严重度颜色标记的 `.review.html`（md 源文件默认转换后删除），**产物保存在报告同目录**。
+### 单份 PPT（含图像页）
 
-**产物示例**（默认只留两个文件）：
 ```
-D:\reports\
-├── BTR-DV-2025-0042.docx              ← 原报告
-├── BTR-DV-2025-0042.docx.review.html  ← 主交付：HTML 审核报告（颜色标记）
-└── BTR-DV-2025-0042.docx.workpaper.md ← 中间产物（单文件，供溯源）
-（.review.md 仅用于生成 HTML，默认转换后删除；需要 md 版说一声即可）
+帮我检查 D:\reports\项目DV汇报.pptx，有没有图文不一致或截图页风险
 ```
 
-**审核报告内容示例**（截自内置模拟报告的真实审核结果）：
-```markdown
-## 二、发现统计
-| 严重度 | 数量 |
-| 严重 | 4 |  一般 | 4 |  建议 | 4 |
+### 批量
 
-## 三、发现明细（严重，节选）
-| # | 类别 | 位置 | 问题描述 | 证据摘录 | 建议 |
-| 1 | CD-S01 结论与数据矛盾 | [T03][P0033] | 汇总表振动判"不合格"，总结论却写"8项全部合格" | "本次共8项试验，8项全部合格。结论：合格" | 复核全部判定，必要时复测 |
-| 2 | CD-S03 设备校准失效 | [T02] | 校准有效期2024-01-31早于试验结束2024-03-10 | "校准有效期至2024年1月31日" | 核查证书，受影响项目重测 |
+```
+批量审核 D:\reports\batch01
 ```
 
-### 场景 2：审核 PPT 试验汇报
+### 同项目 Word + PPT 对照
 
-**你说**：
 ```
-帮我检查 D:\reports\xxx项目DV汇报.pptx 有没有问题
-```
-
-与 Word 流程相同，额外检查 PPT 特定项：页码/版本标识、图表数据来源标注、图片页（自动标记转人工核对）；若同项目 Word 报告也在，会自动运行跨报告对照（`--pair`）核对两份的判定结果与样品编号是否一致。页数很多（>30 页）的 PPT 会自动分段提取。
-
-**批量模式踩坑**：① 每份完成会在对话里报一行进度（n/N）；② 单份失败（损坏/加密/旧格式）会被记录并跳过，不影响整批，失败清单进汇总；③ 中断了直接说"继续"，已有 `.review.html` 的报告会自动跳过。
-
-### 场景 3：批量审核一个文件夹
-
-**你说**：
-```
-批量审核 D:\reports\batch01 这个文件夹里的所有报告
+审核 D:\reports\项目DV报告.docx，并对照同项目 PPT：D:\reports\项目DV汇报.pptx
 ```
 
-**它会做**：先列出文件夹内全部 .docx/.pptx 请你确认 → 逐份处理、逐份产出 `.review.html` + `.workpaper.md`（对话里只报摘要）→ 全部完成后生成 `batch-review-summary.html`（md 源文件默认转换后删除）。
+## 验收场景
 
-**汇总示例**（截自真实批量运行）：
-```markdown
-## 二、各报告结论一览
-| # | 文件 | 报告编号 | 总体评价 | 严重 | 一般 | 建议 |
-| 1 | a项目DV报告.docx | BTR-…-0156 | 存在严重问题需整改 | 4 | 4 | 4 |
-| 2 | a项目DV汇报.pptx | BTR-…-0156 | 存在严重问题需整改 | 1 | 2 | 4 |
+1. **单份 Word**：生成独立工件目录，至少包含 `.review.html`、`.workpaper.md`、`.issues.json`；每条发现带 `预期/实际/证据/置信度`。
+2. **PPT + 可视觉复核**：关键截图/图表页先做视觉检查，再输出图/表清单与图文一致性结论。
+3. **PPT + 无视觉能力**：报告中明确出现 `no-vision/manual fallback` 说明；相关页只进入人工核对项，不写成定论。
+4. **中英混排报告**：能独立识别中文术语、英文缩写、双语标题/图注不一致问题，即使数值本身没错也可提出。
+5. **批量续跑**：已有报告目录 `.review.html` + 工件目录 `.issues.json` + `evidence.json` 的报告被跳过，剩余报告继续处理，并最终生成批量汇总。
+6. **Word/PPT 成对对照**：`--pair` 结果被纳入 DC-P05，能指出判定结果、样本量、关键数值或图表来源不一致。
 
-## 四、共性问题（≥2 份报告命中）
-| CD-S01 结论与数据矛盾 | 2份 | 建议溯源数据管理流程 |
-| CD-J01 单位写法不统一 | 2份 | 建议纳入报告编制培训 |
-```
+## 常见问题
 
-### 场景 4：启用公司报告模板检查
+**Q1：最终交付是什么？**
+A：单份以 `.review.html` 为主交付；`.workpaper.md` 和 `.issues.json` 保留在工件目录中供溯源与聚合。
 
-把公司报告模板的结构要求填进 `references/report-template-profile.md`（文件内有填写说明）：
+**Q2：必须提供公司模板或标准矩阵吗？**
+A：不是。没有也能审；提供后可增加结构完整性、覆盖度和条件对照检查。
 
-```markdown
-## 必备章节
-- 概述
-- 样品信息
-- 引用标准
-- 试验设备
-- 试验项目汇总
-- 结论
-- 附录
-```
+**Q3：能自动读懂图片、截图、SmartArt 吗？**
+A：脚本不能。只有在当前模型/工具链确实支持视觉复核时，才可对图像内容给出结论；否则必须转人工核对项。
 
-重跑 `deploy.ps1` 后，审核时脚本自动检查必备章节缺失（CHECK-8），agent 另做章节顺序/必备表格的语义核对。不填则自动跳过，不影响其它功能。
-
-### 场景 5：登记客户标准，做漏项与条件核查
-
-复制 `references/standards/_template.md` 为 `x客户-DV大纲-2025.md`，填写矩阵（示例）：
-
-```markdown
-| 序号 | 试验项目 | 引用条款 | 试验条件要点（可选） | 样品数量 | 判定准则 |
-| 1 | 振动 | 6.2.1 | SOC 100%，25±5℃ | 1包 | 绝缘电阻≥100Ω/V，无漏液、起火、爆炸 |
-| 2 | 温度冲击 | 6.3.2 | -40℃~85℃，各驻留1h，5循环 | 1包 | 容量保持率≥90%，无泄漏 |
-```
-
-重跑 `deploy.ps1` 后，审核该客户项目报告时自动：核对试验项目覆盖（漏项 = 严重）、对照试验条件（不一致 = ⚠️）、核对样本量。
-
-### 场景 6：用同类项目报告做对照
-
-**你说**：
-```
-审核 D:\reports\新项目DV.docx，参考 D:\reports\老项目DV.docx 的判定尺度
-```
-
-它会先提取老报告的判定准则/试验条件作基线，新报告与基线的差异列为"一般"级 ⚠️（防"同项不同尺"），只列差异不判对错。
-
----
-
-## 常见问题（六问六答）
-
-**1. 审核哪些内容？**
-文档合规性（封面/签署/样品/设备校准/标准引用/结果呈现/结论/PPT 特定项）、数据逻辑（判定与限值比对、临界值、单位、全文一致性、结论逻辑、数据完整性）、8 类脚本确定性检查（占位符、日期倒挂与校准过期、编号一致性与疑似笔误、单位、判定计数矛盾、标准年号、空白单元格、模板必备章节）；可选：标准矩阵覆盖度核查。
-
-**2. 需要提供报告模板吗？** 不需要也能审；填了模板档案（场景 4）可增加结构完整性检查。
-
-**3. 需要提供测试方法吗？** 不需要。想更深一层就把条件要点填进标准矩阵（场景 5），只做对照不做技术定性。
-
-**4. 需要其它项目同类报告参考吗？** 不需要；提供后可做判定尺度对照（场景 6）。
-
-**5. 如何批量审核？** 给一个文件夹路径即可（场景 3）。
-
-**6. 交付结果是什么样的？**
-单份默认两个文件：`<报告名>.review.html`（**主交付**：表格排版 + 严重度颜色标记）+ `<报告名>.workpaper.md`（中间产物：检查线索 + 提取全文，含证据定位索引，供溯源），均保存在报告同目录。`.review.md` 仅用于生成 HTML，默认转换后删除；需要 md 版（审核报告或批量汇总）时说明即可提供。批量：每份 html + workpaper，外加一份 `batch-review-summary.html` 汇总。
-
-## 审核输出解读
-
-- **严重**（红色）：结论与数据矛盾、漏项、校准失效、无法追溯等 —— 优先处理
-- **一般**（橙色）：标准年号旧、签署不全、临界值未说明、与参考基线不一致等
-- **建议**（蓝色）：格式与可读性
-- **人工核对项**（紫色）：图片/SmartArt/截图页、证书真伪等 AI 无法确认的事项
-- 发现的位置索引含义：`[P0012]`=Word 段落，`[T02]`=Word 表格，`[S03]`=PPT 第 3 页；在 `.workpaper.md` 第二部分可直接跳转定位
-
-## 团队共享与更新
-
-- **分发给同事**：把整个 `product-dv-report-review/` 文件夹放共享盘或 git 仓库（`.venv/` 无需分发），同事按「快速上手」执行即可。
-- **统一维护**：审核清单、缺陷库、模板档案、标准矩阵的修改集中在一份主拷贝上，改完通知团队各自重跑 `deploy.ps1` 同步。
-- **数据安全**：脚本本地运行；报告内容经企业批准的模型通道处理。客户标准矩阵注意密级，登记前确认允许被 AI 工具读取。
+**Q4：会不会替代工程师最终判定？**
+A：不会。所有输出都保留“AI 辅助、人工终判”的免责声明。
 
 ## 限制
 
-- 仅支持 `.docx` / `.pptx`；旧版 `.doc` / `.ppt` 请先另存为新格式；扫描件 PDF 不在支持范围
-- 图片、SmartArt、嵌入图表对象中的文字不可机读（脚本会标记并转人工核对）
-- 脚本线索为启发式规则，可能有误报，需审核者甄别
+- 仅支持 `.docx` / `.pptx`；旧版 `.doc` / `.ppt` 请先另存为新格式。
+- 图片、SmartArt、嵌入图表对象中的文字默认不可机读。
+- 脚本线索为启发式规则，写入报告前必须回原文核对。
 
 ## 维护
 
-- 标准年号核查表在 `references/standards-active.md`（KNOWN_CURRENT / SOFT_WARN 两节），按公司现行标准清单定期更新，改完重跑 `deploy.ps1` 即生效，无需改源码
-- 新发现的典型缺陷补充进 `references/common-defects.md`（缺陷库越滚越准）
-- 公司报告模板要求维护在 `references/report-template-profile.md`
-
-## 自验证（练手）
-
-```bash
-# 需要 python-docx / python-pptx（仅生成模拟报告用，skill 本身零依赖）
-python -m venv .venv && .venv/Scripts/pip install python-docx python-pptx
-.venv/Scripts/python tests/make_mock_reports.py
-
-# 然后在 copilot / opencode 中说：
-#   批量审核 <本目录>\tests 下的所有测试报告
-# 模拟报告植入了 15 个典型缺陷（清单见 tests/make_mock_reports.py 末尾 EXPECTED），
-# 对照审核输出即可快速熟悉交付物格式。
-```
+- 标准年号表：`references\standards-active.md`
+- 缺陷库：`references\common-defects.md`
+- 模板档案：`references\report-template-profile.md`
+- 输出与聚合规范：`references\review-output-template.md`、`references\batch-summary-template.md`
