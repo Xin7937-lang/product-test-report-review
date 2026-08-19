@@ -76,11 +76,40 @@ D:\reports\
 4. **JSON-first 归一化**：`language_review.py` 准备语言上下文，`figure_checks.py` 检查图项；模型/人工发现经 `normalize_review.py` 归一化。
 5. **HTML 交付**：`render_review.py` 从归一化 JSON 生成 `.review.html`；`make_html_report.py` 保留旧版 Markdown 兼容路径。
 
+## JSON-first 命令链
+
+以下命令构成一份报告的最小新流程；`<artifact-dir>` 应位于报告同目录的
+`<报告文件名>.review-artifacts\`：
+
+```powershell
+python scripts\extract_report.py <报告文件> -o <artifact-dir>\<报告文件名>.extracted.md
+python scripts\evidence_pipeline.py <报告文件> --output-dir <artifact-dir>
+python scripts\report_checks.py <artifact-dir>\<报告文件名>.extracted.md
+python scripts\language_review.py <artifact-dir>\evidence.json
+python scripts\figure_checks.py <artifact-dir>\evidence.json --no-vision
+python scripts\normalize_review.py <artifact-dir>\<报告文件名>.raw-review.json `
+  -o <artifact-dir>\<报告文件名>.issues.json `
+  --evidence <artifact-dir>\evidence.json `
+  --figure-review <artifact-dir>\figure-review.json `
+  --language-input <artifact-dir>\language-review-input.json `
+  --workpaper <artifact-dir>\<报告文件名>.workpaper.md
+python scripts\render_review.py <artifact-dir>\<报告文件名>.issues.json `
+  -o <报告目录>\<报告文件名>.review.html
+```
+
+`raw-review.json` 由模型或人工语义复核产生，不是脚本自动生成；至少应包含
+`issues`，也可包含 `language_findings`、`figure_inventory`、`metadata` 和
+`checked_items`。图表规则结果由单独的 `figure-review.json` 通过命令行合并。
+字段要求以
+`references\review-output-template.md` 为准。具备可靠视觉能力时，将模型观察写入
+`references\vision-observation-template.json` 兼容的 JSON，再用
+`figure_checks.py --vision-observations <观察.json>` 替代 `--no-vision`。
+
 ## 视觉策略（重要）
 
 - **vision-first**：如果运行环境能看渲染后的页面、截图或导出图像，图像相关问题优先用视觉复核。
 - **no-vision/manual fallback**：若当前环境无法可靠看图，则图像页、截图页、嵌入图表对象只可进入“人工核对项”；要明确写明原因，不能假装已识别图片内容。
-- 无视觉能力时可提醒用户切换到 GPT-5.6 Luna、GPT-5.6 Terra、GPT-5.6 Sol、Claude Sonnet 5 或 Gemini 3.5 Flash 等视觉模型。
+- 无视觉能力时可提醒用户切换到当前工具链明确支持图像输入的视觉模型，具体模型名称以运行环境能力说明为准。
 - 文本脚本仍会把不可机读对象打上 ⚠️ 标记，帮助建立“应有 vs 实有”图表清单。
 
 ## 批量审核与续跑
@@ -88,6 +117,17 @@ D:\reports\
 - 每份报告独立生成 `*.review-artifacts\` 子目录，HTML 主交付保存在报告目录。
 - 批量中断后再次运行时：**报告目录存在 `.review.html` 且工件目录同时存在 `.issues.json` 与 `evidence.json` 才算完成**；缺一则继续补齐。
 - 全批完成后，在批次根目录输出 `batch-review-summary.html`（主交付）与相应的中间汇总 md（默认删除）。
+
+## 本地部署与更新
+
+在仓库根目录运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+该命令将当前技能包同步到用户级 `.agents\skills\product-dv-report-review\`。
+更新后应至少运行 `python scripts\render_review.py --smoke-test`，再开始审核新报告。
 
 ## 使用示例
 
@@ -133,7 +173,7 @@ A：单份以 `.review.html` 为主交付；`.workpaper.md` 和 `.issues.json` �
 A：不是。没有也能审；提供后可增加结构完整性、覆盖度和条件对照检查。
 
 **Q3：能自动读懂图片、截图、SmartArt 吗？**
-A：脚本不能。只有在当前模型/工具链确实支持视觉复核时，才可对图像内容给出结论；否则必须转人工核对项。
+A：脚本不能。只有在当前模型/工具链确实支持视觉复核时，才可对图像内容给出结论；否则必须转人工核对项，并在结果中保留 `no-vision/manual fallback` 说明。
 
 **Q4：会不会替代工程师最终判定？**
 A：不会。所有输出都保留“AI 辅助、人工终判”的免责声明。

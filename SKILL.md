@@ -27,6 +27,18 @@ description: 审核产品验证（DV，设计验证）测试报告与试验汇�
 
 `.review.md` 仅作为生成 HTML 的中间稿，转换成功后默认删除；`.extracted.md` 在并入 `.workpaper.md` 后默认删除；`pair-checks.md` 仅在 Word/PPT 成对对照时生成。
 
+## 本地部署与更新
+
+技能包更新后，在仓库根目录执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+部署脚本会把当前版本同步到用户级
+`.agents\skills\product-dv-report-review\`，并排除 `.git`、缓存和报告输入文件。
+部署后先运行 `python scripts\render_review.py --smoke-test` 验证渲染器，再处理实际报告。
+
 ## 审核工作流（单份报告）
 
 严格按以下 5 步执行；**保留现有 CHECK-1~CHECK-8 / DC-* / DL-* 命名，不改判定边界**。
@@ -46,13 +58,14 @@ description: 审核产品验证（DV，设计验证）测试报告与试验汇�
    - **独立执行中英技术语言复核**：中文术语、英文缩写、双语标题/图注/结论页分别检查，不把它们混同为纯格式问题。
    - **独立执行图/表清单复核**：先做“应有 vs 实有”图表/照片清单，再核对图文一致性、正文引用关系与完整性。
    - **视觉优先**：若模型可查看渲染页、截图或导出的图像，先做视觉复核再下图像相关结论；若无视觉能力，则把相关问题写入“人工核对项”，并明确注明 `no-vision/manual fallback` 原因。
-   - 若没有视觉观察 JSON，运行 `python scripts\figure_checks.py <工件目录>\evidence.json -o <工件目录>\figure-review.json --no-vision`；有视觉能力时先将模型观察写入 JSON，再运行 `--vision-observations <观察 JSON>`。优先使用支持视觉的模型；不支持时提醒用户切换到 GPT-5.6 Luna、GPT-5.6 Terra、GPT-5.6 Sol、Claude Sonnet 5 或 Gemini 3.5 Flash 等视觉模型。
+   - 若没有视觉观察 JSON，运行 `python scripts\figure_checks.py <工件目录>\evidence.json -o <工件目录>\figure-review.json --no-vision`；有视觉能力时先将模型观察写入 JSON，再运行 `--vision-observations <观察 JSON>`。优先使用当前工具链明确支持图像输入的视觉模型；不支持时必须切换模型或输出人工核对项，不得猜测图像内容。
 4. **覆盖度核查（阶段 2：标准对照）**
    - 若 `references\standards\` 下存在适用于该报告客户/项目的标准矩阵（非 `_` 开头文件），逐项核对试验项目覆盖情况，标记“大纲有、报告无”的漏项。
    - 若矩阵含“试验条件要点”，按 DL-A06 做条件对照；只呈现差异，不判定方法对错。
    - 没有适用矩阵时跳过本步，并在输出中说明原因。
 5. **输出审核报告（阶段 3：JSON-first → HTML）**
    - 先把每条发现规范为临时 `<工件目录>\<报告文件名>.raw-review.json`。语言发现至少包含原文、建议、原因、上下文依据、位置、置信度和技术含义是否变化；图表发现必须包含预期、实际、证据和图项位置。
+   - 原始审核 JSON 由模型/人工语义复核产生，至少保留每条发现的类别、严重度、标题、预期、实际、位置、证据摘录、建议和置信度；字段契约以 `references\review-output-template.md` 为准。
    - 运行 `python scripts\normalize_review.py <工件目录>\<报告文件名>.raw-review.json -o <工件目录>\<报告文件名>.issues.json --evidence <工件目录>\evidence.json --figure-review <工件目录>\figure-review.json --language-input <工件目录>\language-review-input.json --workpaper <工件目录>\<报告文件名>.workpaper.md`。
    - 运行 `python scripts\render_review.py <工件目录>\<报告文件名>.issues.json -o <报告目录>\<报告文件名>.review.html` 生成 HTML 主交付物。`make_html_report.py` 保留用于旧版 Markdown 审核稿和兼容场景。
    - 对话内给出总体评价、严重发现摘要、图像审阅模式（vision / no-vision / hybrid）与 HTML 路径。
@@ -73,7 +86,7 @@ description: 审核产品验证（DV，设计验证）测试报告与试验汇�
 3. 每份默认产出报告目录中的 `.review.html`，以及独立工件目录中的 `.workpaper.md` + `.issues.json` + `evidence.json`；对话内只报一行进度（n/N + 总体评价）。
 4. **失败隔离**：某份报告提取失败（损坏/加密/旧格式）时，记录文件名与原因，跳过继续下一份，并在批量汇总中列出失败/待人工处理清单；不得因单份失败中断整批。
 5. **中断恢复**：用户说“继续”时，先检查报告目录中是否已有 `.review.html`，并检查工件目录中是否同时已有 `.issues.json` 与 `evidence.json`；三者都在才视为完成并跳过，只存在其一时视为未完成，重新补齐。
-6. 全部完成后，按 `references\batch-summary-template.md` 写 `batch-review-summary.md`，优先聚合各报告的 `.issues.json`，再运行 `make_html_report.py --rm` 生成 `batch-review-summary.html`；对话内展示“各报告结论一览”“失败/跳过清单”“严重问题清单”。
+6. 全部完成后，按 `references\batch-summary-template.md` 写 `batch-review-summary.md`，优先聚合各报告的 `.issues.json`，再运行 `python scripts\make_html_report.py batch-review-summary.md --rm` 生成 `batch-review-summary.html`；对话内展示“各报告结论一览”“失败/跳过清单”“严重问题清单”。
 
 ## 审核原则（铁律）
 
