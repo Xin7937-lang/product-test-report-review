@@ -1,0 +1,38 @@
+{
+  "schema_version": "vision-observation.v1",
+  "vision_mode": "vision",
+  "observations": [
+    {
+      "actual_id": "AF0001",
+      "figure_id": "Figure 4-3",
+      "confidence": "high",
+      "image_type": "chart",
+      "x_axis": {
+        "name": "Time",
+        "unit": "s",
+        "range": "0-20000 s"
+      },
+      "y_axis": {
+        "name": "Capacity",
+        "unit": "Ah",
+        "range": ""
+      },
+      "units": [
+        "s",
+        "Ah"
+      ],
+      "legend": [
+        "Cell 1",
+        "Cell 2"
+      ],
+      "curve_count": 2,
+      "sample_labels": [
+        "Cell 1",
+        "Cell 2"
+      ],
+      "trend": "decreasing",
+      "ocr_text": [],
+      "notes": "仅记录图中可观察内容，不补充图片未显示的技术结论。"
+    }
+  ]
+}

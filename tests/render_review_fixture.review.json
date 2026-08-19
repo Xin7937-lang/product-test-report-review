@@ -1,0 +1,70 @@
+{
+  "metadata": {
+    "report_name": "上下文驱动示例报告",
+    "report_id": "CTX-2026-001",
+    "source_file": "C:\\reports\\context-demo.docx"
+  },
+  "summary": {
+    "overall_assessment": "存在严重问题，建议整改后复核。",
+    "conclusion": "自动化输出仅供工程师复核参考。"
+  },
+  "issues": [
+    {
+      "issue_id": "ISSUE-101",
+      "category": "结论一致性",
+      "severity": "critical",
+      "confidence": "0.97",
+      "location": "[P0012]",
+      "expected": "结论与数据一致",
+      "actual": "表格显示不合格，结论写合格",
+      "evidence": "结论段与结果表冲突",
+      "problem": "结论与数据矛盾",
+      "recommendation": "复核全部判定依据并修订结论",
+      "technical_meaning_changed": true,
+      "requires_author_confirmation": true,
+      "source": "fixture"
+    }
+  ],
+  "language_findings": [
+    {
+      "finding_id": "LANG-101",
+      "severity": "minor",
+      "location": "[P0007]",
+      "source_text": "容里",
+      "suggestion": "容量",
+      "reason": "明显错别字",
+      "technical_meaning_changed": false,
+      "source": "fixture"
+    }
+  ],
+  "figure_inventory": [
+    {
+      "figure_id": "FIG-101",
+      "location": "[S05]",
+      "expected": "应包含趋势图",
+      "actual": "仅保留图标题",
+      "status": "缺失",
+      "note": "需补充原图",
+      "severity": "manual",
+      "source": "C:\\reports\\artifacts\\slide05.png",
+      "requires_author_confirmation": true
+    }
+  ],
+  "trace_artifacts": [
+    {
+      "label": "工作稿",
+      "type": "workpaper",
+      "path": "C:\\reports\\context-demo.workpaper.md",
+      "description": "供问题回溯"
+    }
+  ],
+  "checked_items": [
+    {
+      "item": "图片页人工核对",
+      "result": "待确认",
+      "details": "包含不可机读图片",
+      "location": "[S05]",
+      "requires_author_confirmation": true
+    }
+  ]
+}
