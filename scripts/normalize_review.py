@@ -8,6 +8,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import re
 import sys
 
 
@@ -52,6 +53,9 @@ REQUIRED_ISSUE_FIELDS = (
     "actual",
     "evidence",
     "recommendation",
+)
+LOCATION_ANCHOR_RE = re.compile(
+    r"\[(?:P\d{4}|T\d{2}|S\d{2}(?:-[A-Za-z0-9]+)?|[HF]\d+)\]"
 )
 
 
@@ -201,6 +205,95 @@ def _append_artifact(target, label, path, artifact_type):
     })
 
 
+def _location_index(evidence):
+    index = {}
+    if not isinstance(evidence, dict):
+        return index
+
+    def add(anchor, detail):
+        if anchor and isinstance(detail, dict):
+            index.setdefault(str(anchor), detail)
+
+    for unit in evidence.get("units") or []:
+        add(unit.get("anchor"), unit.get("location_detail"))
+    for actual in evidence.get("actual_figures") or []:
+        add(actual.get("source_anchor"), actual.get("location_detail"))
+        if actual.get("id") and actual.get("location_detail"):
+            index[str(actual["id"])] = actual["location_detail"]
+    for expected in evidence.get("expected_figures") or []:
+        details = expected.get("location_details") or expected.get("location_detail")
+        if isinstance(details, dict):
+            details = [details]
+        for anchor, detail in zip(expected.get("source_anchors") or [], details or []):
+            add(anchor, detail)
+        for key in ("expected_id", "figure_id", "normalized_figure_id"):
+            if expected.get(key) and details:
+                index[str(expected[key])] = details[0]
+    return index
+
+
+def _location_refs(value):
+    if isinstance(value, dict):
+        refs = []
+        for key in ("source_anchor", "anchor", "location"):
+            refs.extend(_location_refs(value.get(key)))
+        return refs
+    if isinstance(value, (list, tuple)):
+        refs = []
+        for item in value:
+            refs.extend(_location_refs(item))
+        return refs
+    return LOCATION_ANCHOR_RE.findall(str(value or ""))
+
+
+def _location_details_for(item, index):
+    supplied = item.get("location_detail") or item.get("location_details")
+    if isinstance(supplied, dict):
+        supplied = [supplied]
+    details = list(supplied or [])
+    refs = _location_refs(item.get("location"))
+    for key in ("actual_id", "expected_id", "figure_id"):
+        value = item.get(key)
+        if value:
+            refs.append(str(value))
+    seen = {
+        json.dumps(detail, ensure_ascii=False, sort_keys=True)
+        for detail in details
+        if isinstance(detail, dict)
+    }
+    for ref in refs:
+        detail = index.get(ref)
+        if not isinstance(detail, dict):
+            continue
+        identity = json.dumps(detail, ensure_ascii=False, sort_keys=True)
+        if identity not in seen:
+            details.append(detail)
+            seen.add(identity)
+    return details
+
+
+def _enrich_location(item, index):
+    details = _location_details_for(item, index)
+    if not details:
+        if isinstance(item.get("location"), dict):
+            item["location_detail"] = item["location"]
+            item["location_display"] = (
+                item["location"].get("display")
+                or item["location"].get("source_anchor")
+                or "[?]"
+            )
+        else:
+            item["location_display"] = _text(item.get("location")) or "[?]"
+        return
+    item["location_details"] = details
+    if len(details) == 1:
+        item["location_detail"] = details[0]
+    item["location_display"] = " / ".join(
+        str(detail.get("display") or detail.get("source_anchor") or "[?]")
+        for detail in details
+    )
+
+
 def normalize(raw, evidence=None, figure_review=None, language_input=None):
     warnings = []
     issues = []
@@ -231,6 +324,10 @@ def normalize(raw, evidence=None, figure_review=None, language_input=None):
         "figure_id",
         extra_keys=("location", "status", "actual_id"),
     )
+    location_index = _location_index(evidence)
+    for item in issues + language_findings + figure_inventory:
+        if isinstance(item, dict):
+            _enrich_location(item, location_index)
 
     counts = {"严重": 0, "一般": 0, "建议": 0, "人工核对项": 0}
     for item in issues + language_findings:
@@ -270,6 +367,7 @@ def normalize(raw, evidence=None, figure_review=None, language_input=None):
         "checked_items": list(raw.get("checked_items") or []),
         "validation_warnings": warnings,
         "normalized_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "location_schema_version": "location.v1",
     }
     if evidence is not None:
         result["evidence_summary"] = {
@@ -279,6 +377,8 @@ def normalize(raw, evidence=None, figure_review=None, language_input=None):
             "expected_figure_count": (evidence.get("document") or {}).get("expected_figure_count"),
             "actual_figure_count": (evidence.get("document") or {}).get("actual_figure_count"),
             "extraction_warning_count": len(evidence.get("extraction_warnings") or []),
+            "evidence_viewer_path": (evidence.get("document") or {}).get("evidence_viewer_path"),
+            "page_resolution": (evidence.get("document") or {}).get("page_resolution"),
         }
     return result
 
@@ -302,6 +402,12 @@ def main(argv=None):
     result = normalize(raw, evidence, figure_review, language_input)
     _append_artifact(result["trace_artifacts"], "原始审核 JSON", args.raw_review, "raw-review")
     _append_artifact(result["trace_artifacts"], "证据 JSON", args.evidence, "evidence")
+    _append_artifact(
+        result["trace_artifacts"],
+        "证据查看器",
+        (evidence.get("document") or {}).get("evidence_viewer_path") if evidence else None,
+        "evidence-viewer",
+    )
     _append_artifact(result["trace_artifacts"], "图表检查 JSON", args.figure_review, "figure-review")
     _append_artifact(result["trace_artifacts"], "语言审核输入", args.language_input, "language-input")
     _append_artifact(result["trace_artifacts"], "工作稿", args.workpaper, "workpaper")

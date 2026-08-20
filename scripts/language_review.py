@@ -72,6 +72,7 @@ def _actuals_by_anchor(evidence):
                 "figure_id": actual.get("figure_id"),
                 "extracted_path": actual.get("extracted_path"),
                 "excluded": actual.get("excluded"),
+                "location_detail": actual.get("location_detail"),
             })
     return result
 
@@ -107,6 +108,7 @@ def build_review_input(evidence):
         units.append({
             "context_id": f"LC{len(units) + 1:04d}",
             "anchor": anchor,
+            "location_detail": unit.get("location_detail"),
             "order": unit.get("order"),
             "kind": unit.get("kind"),
             "section_context": unit.get("section_context") or [],
@@ -132,6 +134,9 @@ def build_review_input(evidence):
             "source_path": document.get("source_path"),
             "source_name": document.get("source_name"),
             "source_type": document.get("source_type"),
+            "location_schema_version": document.get("location_schema_version"),
+            "page_resolution": document.get("page_resolution"),
+            "evidence_viewer_path": document.get("evidence_viewer_path"),
         },
         "review_requirements": [
             "结合章节标题、前后文、关联图表和术语检查，不按孤立句子定性。",

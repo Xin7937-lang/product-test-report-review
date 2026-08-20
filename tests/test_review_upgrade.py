@@ -26,6 +26,9 @@ LANGUAGE_REVIEW = load_script("language_review.py")
 FIGURE_CHECKS = load_script("figure_checks.py")
 NORMALIZE_REVIEW = load_script("normalize_review.py")
 EVIDENCE_PIPELINE = load_script("evidence_pipeline.py")
+RENDER_EVIDENCE = load_script("render_evidence.py")
+RENDER_REVIEW = load_script("render_review.py")
+LOCATION_RESOLVER = load_script("location_resolver.py")
 
 
 def sample_evidence():
@@ -153,6 +156,10 @@ class ReviewUpgradeTests(unittest.TestCase):
                 any(item.get("normalized_figure_id") == "4-3"
                     for item in result["expected_figures"])
             )
+            self.assertEqual(result["units"][0]["location_detail"]["source_anchor"], "[P0001]")
+            self.assertEqual(result["units"][0]["location_detail"]["page_status"], "unavailable")
+            self.assertIn("页码未解析", result["units"][0]["location_detail"]["display"])
+            self.assertIn("location-P0001", RENDER_EVIDENCE.render_evidence_html(result))
             extracted = os.path.join(
                 artifact_dir,
                 result["actual_figures"][0]["extracted_path"],
@@ -219,6 +226,106 @@ class ReviewUpgradeTests(unittest.TestCase):
         self.assertEqual(result["issues"][0]["confidence"], "高")
         self.assertEqual(result["validation_warnings"], [])
         self.assertEqual(result["summary"]["severity_counts"]["严重"], 1)
+
+    def test_location_page_map_resolver_uses_explicit_pages(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            page_map = os.path.join(temp_dir, "pages.json")
+            with open(page_map, "w", encoding="utf-8") as handle:
+                json.dump({"pages": {"[P0001]": 4, "[T01]": 5}}, handle)
+            result = LOCATION_RESOLVER.resolve_docx_pages(
+                os.path.join(temp_dir, "demo.docx"),
+                [{"anchor": "[P0001]"}, {"anchor": "[T01]"}],
+                page_map_path=page_map,
+            )
+            self.assertEqual(result["status"], "resolved")
+            self.assertEqual(result["pages"]["[P0001]"], 4)
+            self.assertEqual(result["pages"]["[T01]"], 5)
+
+    def test_pptx_location_includes_slide_shape_and_geometry(self):
+        try:
+            from pptx import Presentation
+            from pptx.util import Inches
+        except ImportError:
+            self.skipTest("python-pptx is not installed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = os.path.join(temp_dir, "location-demo.pptx")
+            artifact_dir = os.path.join(temp_dir, "location-demo.review-artifacts")
+            prs = Presentation()
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            slide.shapes.add_textbox(
+                Inches(1), Inches(2), Inches(3), Inches(1)
+            ).text_frame.text = "图表说明"
+            prs.save(source)
+
+            result = EVIDENCE_PIPELINE.build_evidence(source, artifact_dir)
+            unit = next(item for item in result["units"] if item["anchor"] == "[S01-1]")
+            detail = unit["location_detail"]
+            self.assertEqual(detail["slide"], 1)
+            self.assertEqual(detail["shape"], 1)
+            self.assertEqual(detail["object_type"], "shape")
+            self.assertEqual(detail["position"]["unit"], "EMU")
+            self.assertIn("左侧", detail["position_summary"])
+            self.assertIn("第 1 页", detail["display"])
+            self.assertIn("第 1 个形状", detail["display"])
+
+    def test_normalize_enriches_legacy_location_from_evidence(self):
+        evidence = sample_evidence()
+        evidence["units"][0]["location_detail"] = {
+            "schema_version": "location.v1",
+            "display": "页码未解析 · 第 1 个段落 · 章节：4.2 Capacity test · [P0001]",
+            "source_anchor": "[P0001]",
+            "page_status": "unavailable",
+            "evidence_path": r"C:\reports\demo.review-artifacts\evidence.html",
+            "evidence_anchor": "location-P0001",
+        }
+        result = NORMALIZE_REVIEW.normalize(
+            {"issues": [{
+                "issue_id": "ISS-LOC",
+                "category": "language",
+                "severity": "major",
+                "confidence": "high",
+                "location": "[P0001]",
+                "expected": "清晰表达",
+                "actual": "存在歧义",
+                "evidence": "原文摘录",
+                "recommendation": "改写",
+            }]},
+            evidence=evidence,
+        )
+        issue = result["issues"][0]
+        self.assertEqual(issue["location_display"], evidence["units"][0]["location_detail"]["display"])
+        self.assertEqual(issue["location_detail"]["evidence_anchor"], "location-P0001")
+
+    def test_render_location_has_source_and_evidence_links(self):
+        data = {
+        "metadata": {"report_name": "location demo"},
+        "summary": {},
+        "issues": [{
+            "issue_id": "ISS-LOC",
+            "category": "定位",
+            "severity": "一般",
+            "confidence": "高",
+            "location": "[S08-3]",
+            "location_detail": {
+                "display": "第 8 页 · 第 3 个形状（图表） · [S08-3]",
+                "source_anchor": "[S08-3]",
+                "source_file": r"C:\reports\demo.pptx",
+                "evidence_path": r"C:\reports\demo.review-artifacts\evidence.html",
+                "evidence_anchor": "location-S08-3",
+            },
+            "expected": "图表位置清晰",
+            "actual": "需要人工复核",
+            "evidence": "位置证据",
+            "recommendation": "打开证据定位",
+        }],
+        }
+        html_text = RENDER_REVIEW.render_html(data, "location demo")
+        self.assertIn("第 8 页", html_text)
+        self.assertIn("打开原文件", html_text)
+        self.assertIn("打开证据定位", html_text)
+        self.assertIn("file:///C:/reports/demo.pptx", html_text)
+        self.assertIn("#location-S08-3", html_text)
 
 
 if __name__ == "__main__":

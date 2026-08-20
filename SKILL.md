@@ -23,9 +23,24 @@ description: 审核产品验证（DV，设计验证）测试报告与试验汇�
 | HTML 审核报告 | `<报告文件名>.review.html`（报告目录） | **主交付物**：最终交付、表格排版 + 严重度颜色标记 |
 | 审核工作稿 | `review-artifacts\<报告文件名>.workpaper.md` | 必留工作底稿：自动检查线索 + 提取全文（含定位索引） |
 | 归一化问题清单 | `review-artifacts\<报告文件名>.issues.json` | 必留机器可聚合工件：JSON-first 字段，用于批量汇总与续跑 |
-| 证据与媒体 | `review-artifacts\evidence.json`、`media\*` | 文档单元、上下文、预期/实际图项、图片媒体和哈希 |
+| 证据与媒体 | `review-artifacts\evidence.json`、`evidence.html`、`media\*` | 文档单元、结构化位置、上下文、预期/实际图项、图片媒体和哈希 |
 
 `.review.md` 仅作为生成 HTML 的中间稿，转换成功后默认删除；`.extracted.md` 在并入 `.workpaper.md` 后默认删除；`pair-checks.md` 仅在 Word/PPT 成对对照时生成。
+
+## 位置标注与人工复核跳转
+
+所有新发现优先使用 `location.v1` 的 `location_detail`/`location_details`，同时保留原有 `[Pxxxx]`、`[Txx]`、`[Sxx]`、`[Sxx-3]` 锚点以兼容旧 JSON。
+
+- **DOCX 段落/表格**：显示段落或表格序号、章节路径和源锚点，例如 `页码未解析 · 第 35 个段落 · 章节：6 单项试验结果 / 6.1 振动试验 · [P0035]`。
+- **PPTX 对象**：显示页码、形状或表格序号、对象类型；若 XML 中有几何信息，再显示相对位置和尺寸，例如 `第 8 页 · 第 3 个形状（图片） · 左侧 10% · 上方 25% · [S08-3]`。
+- 位置对象中的 `source_file`/`source_href` 用于打开原文，`evidence_path` + `evidence_anchor` 用于打开本地 `evidence.html` 的稳定锚点。原文链接不保证 Office 深链，证据查看器是确定性回退。
+- DOCX 只有在真实解析成功时才写入页码。可用 `--page-map <page-map.json>` 提供外部映射，或用 `--resolve-pages` 尝试 Microsoft Word COM；解析失败必须保留 `page_status=unavailable`，不得补写估算页码。
+
+页码映射示例：
+
+```json
+{"pages": {"[P0035]": 12, "[T02]": 13}}
+```
 
 ## 本地部署与更新
 
@@ -47,6 +62,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy.ps1
    - 先创建工件目录：`<报告目录>\<报告文件名>.review-artifacts\`。
    - 运行 `python scripts\extract_report.py <报告文件> -o <工件目录>\<报告文件名>.extracted.md`。
    - 运行 `python scripts\evidence_pipeline.py <报告文件> --output-dir <工件目录> --output-json <工件目录>\evidence.json`，提取文档结构、上下文、图像/图表对象、媒体文件、预期图项和确定性匹配。
+   - DOCX 需要真实页码时，追加 `--page-map <工件目录>\page-map.json`；若本机安装并可调用 Microsoft Word/pywin32，可改用 `--resolve-pages`。脚本会同时生成可点击的 `<工件目录>\evidence.html`。
    - PPT 页数很多（>30 页）时用 `--slides 1-30` 等参数分段提取、逐段审核。
 2. **确定性检查（阶段 1：规则线索）**
    - 运行 `python scripts\report_checks.py <上一步的 .extracted.md>`，生成 `<工件目录>\<报告文件名>.workpaper.md`。
@@ -64,11 +80,11 @@ powershell -ExecutionPolicy Bypass -File .\deploy.ps1
    - 若矩阵含“试验条件要点”，按 DL-A06 做条件对照；只呈现差异，不判定方法对错。
    - 没有适用矩阵时跳过本步，并在输出中说明原因。
 5. **输出审核报告（阶段 3：JSON-first → HTML）**
-   - 先把每条发现规范为临时 `<工件目录>\<报告文件名>.raw-review.json`。语言发现至少包含原文、建议、原因、上下文依据、位置、置信度和技术含义是否变化；图表发现必须包含预期、实际、证据和图项位置。
+   - 先把每条发现规范为临时 `<工件目录>\<报告文件名>.raw-review.json`。语言发现至少包含原文、建议、原因、上下文依据、`location`/`location_detail`、置信度和技术含义是否变化；图表发现必须包含预期、实际、证据和图项位置。
    - 原始审核 JSON 由模型/人工语义复核产生，至少保留每条发现的类别、严重度、标题、预期、实际、位置、证据摘录、建议和置信度；字段契约以 `references\review-output-template.md` 为准。
-   - 运行 `python scripts\normalize_review.py <工件目录>\<报告文件名>.raw-review.json -o <工件目录>\<报告文件名>.issues.json --evidence <工件目录>\evidence.json --figure-review <工件目录>\figure-review.json --language-input <工件目录>\language-review-input.json --workpaper <工件目录>\<报告文件名>.workpaper.md`。
+   - 运行 `python scripts\normalize_review.py <工件目录>\<报告文件名>.raw-review.json -o <工件目录>\<报告文件名>.issues.json --evidence <工件目录>\evidence.json --figure-review <工件目录>\figure-review.json --language-input <工件目录>\language-review-input.json --workpaper <工件目录>\<报告文件名>.workpaper.md`；归一化会依据锚点自动补全 `location_detail`、`location_display` 和证据查看器位置。
    - 运行 `python scripts\render_review.py <工件目录>\<报告文件名>.issues.json -o <报告目录>\<报告文件名>.review.html` 生成 HTML 主交付物。`make_html_report.py` 保留用于旧版 Markdown 审核稿和兼容场景。
-   - 对话内给出总体评价、严重发现摘要、图像审阅模式（vision / no-vision / hybrid）与 HTML 路径。
+   - 对话内给出总体评价、严重发现摘要、图像审阅模式（vision / no-vision / hybrid）与 HTML 路径；人工复核时优先点击每条发现的“打开证据定位”。
 
 ## 可选输入（用户提供或配置后启用）
 
@@ -83,14 +99,14 @@ powershell -ExecutionPolicy Bypass -File .\deploy.ps1
 
 1. 列出范围内全部 `.docx`/`.pptx`，向用户确认清单后再开始。
 2. **逐份处理**：一份完整执行单份五步流程并输出后，再处理下一份；每份报告各自使用独立的 `.review-artifacts` 子目录。
-3. 每份默认产出报告目录中的 `.review.html`，以及独立工件目录中的 `.workpaper.md` + `.issues.json` + `evidence.json`；对话内只报一行进度（n/N + 总体评价）。
+3. 每份默认产出报告目录中的 `.review.html`，以及独立工件目录中的 `.workpaper.md` + `.issues.json` + `evidence.json` + `evidence.html`；对话内只报一行进度（n/N + 总体评价）。
 4. **失败隔离**：某份报告提取失败（损坏/加密/旧格式）时，记录文件名与原因，跳过继续下一份，并在批量汇总中列出失败/待人工处理清单；不得因单份失败中断整批。
-5. **中断恢复**：用户说“继续”时，先检查报告目录中是否已有 `.review.html`，并检查工件目录中是否同时已有 `.issues.json` 与 `evidence.json`；三者都在才视为完成并跳过，只存在其一时视为未完成，重新补齐。
+5. **中断恢复**：用户说“继续”时，先检查报告目录中是否已有 `.review.html`，并检查工件目录中是否同时已有 `.issues.json`、`evidence.json` 与 `evidence.html`；四者都在才视为完成并跳过，只存在其一时视为未完成，重新补齐。
 6. 全部完成后，按 `references\batch-summary-template.md` 写 `batch-review-summary.md`，优先聚合各报告的 `.issues.json`，再运行 `python scripts\make_html_report.py batch-review-summary.md --rm` 生成 `batch-review-summary.html`；对话内展示“各报告结论一览”“失败/跳过清单”“严重问题清单”。
 
 ## 审核原则（铁律）
 
-- **每条发现必须附完整证据**：至少包含 `预期`、`实际`、位置索引（如 `[P0012]`、`[S03]`）与原文摘录。没有证据的发现不得写入报告。
+- **每条发现必须附完整证据**：至少包含 `预期`、`实际`、详细位置（页码/段落/表格/幻灯片/形状或表格序号；无法解析页码时明确说明）与原文摘录。保留 `[P0012]`、`[S03]` 等源锚点便于追溯；没有证据的发现不得写入报告。
 - **每条发现必须给置信度**：`高`=文字/表格直接证据；`中`=跨段归纳或部分视觉证据；`人工`=AI 无法确认、需人工核查。不要输出“低置信度定论”。
 - **区分事实与推测**：脚本线索和语义存疑处标注“线索/待人工确认”，不写成定论。
 - **图像相关结论遵循 vision-first**：无法视觉核对时，写成人工核对项，不得伪装成自动识别结果。

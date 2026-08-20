@@ -15,7 +15,7 @@
 | 报告数量 | n 份（docx x 份 / pptx y 份） |
 | 审核日期 | <日期> |
 | 使用的标准矩阵 | <名称，无则说明> |
-| 完成判定 | 报告目录 `.review.html` + 工件目录 `.issues.json` + `evidence.json` 同时存在视为已完成 |
+| 完成判定 | 报告目录 `.review.html` + 工件目录 `.issues.json` + `evidence.json` + `evidence.html` 同时存在视为已完成 |
 
 ## 二、各报告结论一览
 
@@ -32,9 +32,9 @@
 
 ## 四、严重问题清单（需优先处理）
 
-| # | 文件 | 位置 | 问题 | 缺陷类别 |
+| # | 文件 | 详细位置（可点击） | 问题 | 缺陷类别 |
 |---|---|---|---|---|
-| 1 | xxx.docx | [T02] | 校准有效期早于试验结束日期 | CD-S03 |
+| 1 | xxx.docx | 第 2 个表格 · [T02] | 校准有效期早于试验结束日期 | CD-S03 |
 
 ## 五、共性问题（≥2 份报告命中同一缺陷类别）
 
@@ -56,7 +56,9 @@
 
 - “总体评价”沿用单份报告的三档：通过 / 修改后通过 / 存在严重问题需整改。
 - “状态”建议使用：`已完成` / `续跑跳过` / `提取失败` / `待人工补证` / `其它`。
-- 汇总时优先聚合各报告工件目录的 `.issues.json`；若缺少 `.review.html`、`.issues.json` 或 `evidence.json` 任一项，该报告**不视为完整完成**。
+- 汇总时优先聚合各报告工件目录的 `.issues.json`；若缺少 `.review.html`、`.issues.json`、`evidence.json` 或 `evidence.html` 任一项，该报告**不视为完整完成**。
+- 聚合严重问题时保留 `.issues.json` 中的 `location_display`、`location_detail` 和 `location_details`；能解析时显示页码/幻灯片与对象序号，不能解析时保留“页码未解析”及段落/表格/章节锚点。
+- 单份报告的原文件入口来自位置对象的 `source_file`，确定性复核入口来自 `evidence_path` + `evidence_anchor`；批量汇总不要把 `[P0035]` 等短锚点当作唯一人工定位信息。
 - 共性问题聚合以缺陷类别编号（CD-x）或清单条目编号（DC-x/DL-x）归并。
 - 第三节无内容时写“无”，不省略章节；失败、旧格式、加密、图片待人工补证都放这里，不要混进“严重问题清单”。
 - JSON-first 汇总优先运行 `python scripts\render_review.py <batch-review-summary.json> -o <批次目录>\batch-review-summary.html`；旧版 Markdown 汇总仍可运行 `python scripts\make_html_report.py <本md> --rm`。

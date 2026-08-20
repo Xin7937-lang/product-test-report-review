@@ -19,6 +19,9 @@ VARIABLE_PAIRS = (
     (("energy", "能量", "wh", "kwh"), ("power", "功率", "w", "kw")),
 )
 NUMBER_RE = re.compile(r"(?<!\d)-?\d+(?:\.\d+)?")
+LOCATION_ANCHOR_RE = re.compile(
+    r"\[(?:P\d{4}|T\d{2}|S\d{2}(?:-[A-Za-z0-9]+)?|[HF]\d+)\]"
+)
 
 
 def _clean(value):
@@ -82,6 +85,65 @@ def _location(item):
     if anchors:
         return "/".join(str(anchor) for anchor in anchors)
     return item.get("source_anchor") or item.get("location") or "[?]"
+
+
+def _location_refs(value):
+    return LOCATION_ANCHOR_RE.findall(_as_text(value))
+
+
+def _location_index(evidence):
+    index = {}
+    for unit in evidence.get("units") or []:
+        if unit.get("anchor") and unit.get("location_detail"):
+            index[unit["anchor"]] = unit["location_detail"]
+    for actual in evidence.get("actual_figures") or []:
+        detail = actual.get("location_detail")
+        if not detail:
+            continue
+        if actual.get("source_anchor"):
+            index[actual["source_anchor"]] = detail
+        if actual.get("id"):
+            index[actual["id"]] = detail
+    for expected in evidence.get("expected_figures") or []:
+        details = expected.get("location_details") or expected.get("location_detail")
+        if isinstance(details, dict):
+            details = [details]
+        for anchor, detail in zip(expected.get("source_anchors") or [], details or []):
+            index[anchor] = detail
+        for key in ("expected_id", "figure_id", "normalized_figure_id"):
+            if expected.get(key) and details:
+                index[str(expected[key])] = details[0]
+    return index
+
+
+def _attach_location_details(items, evidence):
+    index = _location_index(evidence)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        details = item.get("location_details") or item.get("location_detail")
+        if isinstance(details, dict):
+            details = [details]
+        details = list(details or [])
+        refs = _location_refs(item.get("location"))
+        for key in ("actual_id", "expected_id", "figure_id"):
+            if item.get(key):
+                refs.append(str(item[key]))
+        seen = {
+            str(detail.get("source_anchor"))
+            for detail in details
+            if isinstance(detail, dict)
+        }
+        for ref in refs:
+            detail = index.get(ref)
+            if not isinstance(detail, dict) or detail.get("source_anchor") in seen:
+                continue
+            details.append(detail)
+            seen.add(detail.get("source_anchor"))
+        if details:
+            item["location_details"] = details
+            if len(details) == 1:
+                item["location_detail"] = details[0]
 
 
 def _expected_text(expected):
@@ -204,6 +266,7 @@ def build_figure_review(evidence, observations=None, vision_available=None):
             "actual": actual_text,
             "status": status,
             "source": (actual or {}).get("extracted_path") or _location(item),
+            "location_detail": item.get("location_detail") or item.get("location_details"),
             "expected_evidence": item.get("evidence") or [],
             "actual_ids": actual_ids,
             "requires_author_confirmation": status not in {"matched", "count_satisfied"},
@@ -257,6 +320,7 @@ def build_figure_review(evidence, observations=None, vision_available=None):
             "actual": _actual_text(actual, vision.get(actual.get("id"))),
             "status": status,
             "source": actual.get("extracted_path") or actual.get("source_path"),
+            "location_detail": actual.get("location_detail"),
             "actual_id": actual.get("id"),
             "excluded": actual.get("excluded", False),
             "excluded_reason": actual.get("excluded_reason"),
@@ -407,6 +471,9 @@ def build_figure_review(evidence, observations=None, vision_available=None):
                     figure_refs=refs,
                 ))
                 break
+
+    _attach_location_details(issues, evidence)
+    _attach_location_details(inventory, evidence)
 
     return {
         "schema_version": SCHEMA_VERSION,
