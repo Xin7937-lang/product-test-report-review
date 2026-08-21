@@ -1,6 +1,6 @@
 # product-dv-report-review
 
-产品验证（DV，设计验证）测试报告通用审核 Skill，适用于电池包等各类产品的 DV/型式试验报告与汇报 PPT。适用于 **GitHub Copilot CLI**、**OpenCode** 及其它支持 Agent Skills 的工具。
+产品验证（DV，设计验证）测试报告通用审核 Skill，适用于各类产品的 DV/型式试验报告审核。适用于 **GitHub Copilot CLI**、**OpenCode** 及其它支持 Agent Skills 的工具。
 
 核心升级：**分阶段证据提取**、**上下文驱动的中英技术语言复核**、**图/表“应有 vs 实有”清单**、**vision-first / no-vision fallback**、**JSON-first 问题归一化**、**HTML 主交付 + 每份报告独立工件目录**。
 
