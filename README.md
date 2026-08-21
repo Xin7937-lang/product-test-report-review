@@ -32,10 +32,12 @@
 │   ├── extract_report.py
 │   ├── report_checks.py
 │   ├── evidence_pipeline.py
+│   ├── location_resolver.py
 │   ├── language_review.py
 │   ├── figure_checks.py
 │   ├── normalize_review.py
 │   ├── render_review.py
+│   ├── render_evidence.py
 │   └── make_html_report.py       # 兼容旧版 Markdown 审核稿
 ├── tests/
 └── deploy.ps1
@@ -53,6 +55,7 @@ D:\reports\
    ├── BTR-DV-2025-0042.docx.workpaper.md
    ├── BTR-DV-2025-0042.docx.issues.json
    ├── evidence.json
+   ├── evidence.html
    ├── language-review-input.json
    ├── figure-review.json
    └── media\
@@ -62,7 +65,18 @@ D:\reports\
 - `.review.html` 是**主交付物**，保存在报告同目录。
 - `.workpaper.md` 是保留溯源底稿（自动检查线索 + 提取全文）。
 - `.issues.json` 是归一化问题台账，供批量聚合、续跑恢复和后续统计使用。
-- `evidence.json`、`language-review-input.json`、`figure-review.json` 和 `media\` 用于还原审核证据。
+- `evidence.json`、`evidence.html`、`language-review-input.json`、`figure-review.json` 和 `media\` 用于还原审核证据。
+
+## 位置标注与跳转
+
+证据使用向后兼容的 `location.v1` 结构化位置，同时保留原有锚点：
+
+- DOCX 段落：`第 4 个段落 · 章节：2 样品信息 · [P0012]`；表格使用 `第 2 个表格 · [T02]`。
+- PPTX 对象：`第 8 页 · 第 3 个形状（图片） · 左侧 10% · 上方 25% · 尺寸 40%×30% · [S08-3]`；表格使用 `第 1 个表格`。
+- `location_detail` 会保留 `source_file`、`source_anchor`、`section_context`、`object_name`、`object_type`、`position`、`evidence_path` 和 `evidence_anchor`，便于机器聚合及人工复核。
+- `evidence_pipeline.py` 默认生成 `evidence.html`。审核 HTML 中的“打开原文件”用于快速打开源文档，“打开证据定位”用于确定性跳转到本地证据查看器；Office 是否能深链到具体对象取决于本机版本和文件关联。
+- DOCX 页码只有在真实解析成功时才显示。可提供显式映射：
+  `{"pages": {"[P0012]": 4, "[T02]": 5}}`；或在安装并可调用 `pywin32`/Microsoft Word 时使用 `--resolve-pages`。无法解析时显示“页码未解析”，绝不猜测页码。
 - `.review.md` / `.extracted.md` 为中间文件，默认在成功后删除。
 
 ## 审核流程（单份）
@@ -84,6 +98,8 @@ D:\reports\
 ```powershell
 python scripts\extract_report.py <报告文件> -o <artifact-dir>\<报告文件名>.extracted.md
 python scripts\evidence_pipeline.py <报告文件> --output-dir <artifact-dir>
+# DOCX 可选：使用显式页码映射，或改用 --resolve-pages 尝试 Word COM
+# python scripts\evidence_pipeline.py <报告文件> --output-dir <artifact-dir> --page-map <artifact-dir>\page-map.json
 python scripts\report_checks.py <artifact-dir>\<报告文件名>.extracted.md
 python scripts\language_review.py <artifact-dir>\evidence.json
 python scripts\figure_checks.py <artifact-dir>\evidence.json --no-vision
@@ -111,11 +127,12 @@ python scripts\render_review.py <artifact-dir>\<报告文件名>.issues.json `
 - **no-vision/manual fallback**：若当前环境无法可靠看图，则图像页、截图页、嵌入图表对象只可进入“人工核对项”；要明确写明原因，不能假装已识别图片内容。
 - 无视觉能力时可提醒用户切换到当前工具链明确支持图像输入的视觉模型，具体模型名称以运行环境能力说明为准。
 - 文本脚本仍会把不可机读对象打上 ⚠️ 标记，帮助建立“应有 vs 实有”图表清单。
+- 图像/图表发现仍必须引用结构化位置；没有视觉能力时，位置链接只能帮助人工打开原文件或证据查看器，不能替代图像核验。
 
 ## 批量审核与续跑
 
 - 每份报告独立生成 `*.review-artifacts\` 子目录，HTML 主交付保存在报告目录。
-- 批量中断后再次运行时：**报告目录存在 `.review.html` 且工件目录同时存在 `.issues.json` 与 `evidence.json` 才算完成**；缺一则继续补齐。
+- 批量中断后再次运行时：**报告目录存在 `.review.html` 且工件目录同时存在 `.issues.json`、`evidence.json` 与 `evidence.html` 才算完成**；缺一则继续补齐。
 - 全批完成后，在批次根目录输出 `batch-review-summary.html`（主交付）与相应的中间汇总 md（默认删除）。
 
 ## 本地部署与更新
@@ -182,6 +199,8 @@ A：不会。所有输出都保留“AI 辅助、人工终判”的免责声明�
 
 - 仅支持 `.docx` / `.pptx`；旧版 `.doc` / `.ppt` 请先另存为新格式。
 - 图片、SmartArt、嵌入图表对象中的文字默认不可机读。
+- DOCX 标准库无法推导真实分页；没有页码解析器或外部 `page-map.json` 时保留段落/表格/章节锚点，并明确显示页码不可用。
+- 原文件链接通常只能打开文档本身，不能保证跳到具体段落、形状或表格；`evidence.html#location-...` 是稳定的人工复核回退入口。
 - 脚本线索为启发式规则，写入报告前必须回原文核对。
 
 ## 维护

@@ -14,6 +14,12 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from location_resolver import resolve_docx_pages
+
 try:  # Optional only; core logic stays stdlib-first.
     from PIL import Image
 except Exception:  # pragma: no cover - fallback path is the default guarantee.
@@ -614,6 +620,74 @@ def _pptx_shape_cnvpr(el):
     return None
 
 
+def _int_attr(node, name):
+    if node is None:
+        return None
+    try:
+        return int(node.get(name))
+    except (TypeError, ValueError):
+        return None
+
+
+def _pptx_shape_geometry(el, slide_size=None):
+    """Return EMU geometry and relative percentages when the shape exposes xfrm."""
+    xfrm = el.find('.//' + A + 'xfrm')
+    if xfrm is None:
+        xfrm = el.find('.//' + P + 'xfrm')
+    if xfrm is None:
+        return None
+    off = xfrm.find(A + 'off')
+    ext = xfrm.find(A + 'ext')
+    x = _int_attr(off, 'x')
+    y = _int_attr(off, 'y')
+    width = _int_attr(ext, 'cx')
+    height = _int_attr(ext, 'cy')
+    if None in (x, y, width, height):
+        return None
+    result = {
+        'x': x,
+        'y': y,
+        'width': width,
+        'height': height,
+        'unit': 'EMU',
+    }
+    if slide_size and slide_size.get('width') and slide_size.get('height'):
+        result['relative'] = {
+            'left_percent': round(x / slide_size['width'] * 100, 1),
+            'top_percent': round(y / slide_size['height'] * 100, 1),
+            'width_percent': round(width / slide_size['width'] * 100, 1),
+            'height_percent': round(height / slide_size['height'] * 100, 1),
+        }
+    return result
+
+
+def _pptx_slide_size(zf):
+    try:
+        root = ET.fromstring(zf.read('ppt/presentation.xml'))
+    except KeyError:
+        return None
+    node = root.find('.//' + P + 'sldSz')
+    if node is None:
+        return None
+    width = _int_attr(node, 'cx')
+    height = _int_attr(node, 'cy')
+    if not width or not height:
+        return None
+    return {'width': width, 'height': height, 'unit': 'EMU'}
+
+
+def _object_name(cnvpr):
+    if cnvpr is None:
+        return ''
+    return _clean(' '.join(
+        value for value in (
+            cnvpr.get('name', ''),
+            cnvpr.get('descr', ''),
+            cnvpr.get('title', ''),
+        ) if value
+    ))
+
+
 def _pptx_slide_title(sp_tree):
     first_text = ''
 
@@ -637,7 +711,8 @@ def _pptx_slide_title(sp_tree):
     return title or first_text
 
 
-def _unit_record(order, anchor, kind, text, section_context, part, slide=None, shape=None, table=None, rows=None):
+def _unit_record(order, anchor, kind, text, section_context, part, slide=None, shape=None,
+                 table=None, rows=None, position=None, object_name=None, object_type=None):
     refs = _figure_refs_from_text(text)
     return {
         'order': order,
@@ -649,6 +724,9 @@ def _unit_record(order, anchor, kind, text, section_context, part, slide=None, s
         'slide': slide,
         'shape': shape,
         'table': table,
+        'position': position,
+        'object_name': object_name,
+        'object_type': object_type or kind,
         'rows': rows or [],
         'direct_figure_references': refs,
         'caption_candidates': [text] if _is_caption_like(text) else [],
@@ -658,7 +736,8 @@ def _unit_record(order, anchor, kind, text, section_context, part, slide=None, s
 
 
 def _actual_record(kind, source_anchor, unit_order, section_context, placement, source_path=None, source_bytes=None,
-                   caption_candidates=None, object_text='', excluded=False, excluded_reason=None):
+                   caption_candidates=None, object_text='', excluded=False, excluded_reason=None,
+                   position=None, object_name=None):
     return {
         'id': None,
         'kind': kind,
@@ -670,6 +749,9 @@ def _actual_record(kind, source_anchor, unit_order, section_context, placement, 
         'sha256': None,
         'dimensions': None,
         'placement': placement,
+        'position': position,
+        'object_name': object_name,
+        'object_type': kind,
         'nearby_text': {},
         'caption_candidates': _dedupe_keep_order([c for c in (caption_candidates or []) if c]),
         'image_type_candidate': None,
@@ -735,6 +817,7 @@ def _build_docx_evidence(src, output_dir):
                         source_bytes=raw.get('source_bytes'),
                         caption_candidates=[raw.get('alt_text', ''), raw.get('object_text', '')],
                         object_text=raw.get('object_text', ''),
+                        object_name=raw.get('alt_text', ''),
                         excluded=raw.get('excluded', False),
                         excluded_reason=raw.get('excluded_reason'),
                     ))
@@ -767,21 +850,17 @@ def _build_docx_evidence(src, output_dir):
                         source_bytes=raw.get('source_bytes'),
                         caption_candidates=[raw.get('alt_text', ''), raw.get('object_text', '')],
                         object_text=raw.get('object_text', ''),
+                        object_name=raw.get('alt_text', ''),
                         excluded=raw.get('excluded', False),
                         excluded_reason=raw.get('excluded_reason'),
                     ))
     return {'units': units, 'actuals': actuals, 'warnings': warnings}
 
 
-def _pptx_object_from_graphic_frame(zf, rels, el, warnings):
+def _pptx_object_from_graphic_frame(zf, rels, el, warnings, slide_size=None):
     cnvpr = _pptx_shape_cnvpr(el)
-    alt_text = _clean(' '.join(
-        value for value in (
-            cnvpr.get('name', '') if cnvpr is not None else '',
-            cnvpr.get('descr', '') if cnvpr is not None else '',
-            cnvpr.get('title', '') if cnvpr is not None else '',
-        ) if value
-    ))
+    alt_text = _object_name(cnvpr)
+    geometry = _pptx_shape_geometry(el, slide_size)
     gd = el.find('.//' + A + 'graphicData')
     uri = gd.get('uri', '') if gd is not None else ''
     if 'table' in uri:
@@ -810,6 +889,8 @@ def _pptx_object_from_graphic_frame(zf, rels, el, warnings):
                 'source_bytes': source_bytes,
                 'caption_candidates': [alt_text],
                 'object_text': _xml_text_from_bytes(source_bytes),
+                'position': geometry,
+                'object_name': alt_text,
                 'excluded': source_bytes is None,
                 'excluded_reason': None if source_bytes is not None else 'Chart relationship missing or unreadable',
             }
@@ -833,6 +914,8 @@ def _pptx_object_from_graphic_frame(zf, rels, el, warnings):
                 'source_bytes': source_bytes,
                 'caption_candidates': [alt_text],
                 'object_text': _xml_text_from_bytes(source_bytes),
+                'position': geometry,
+                'object_name': alt_text,
                 'excluded': source_bytes is None,
                 'excluded_reason': None if source_bytes is not None else 'SmartArt relationship missing or unreadable',
             }
@@ -844,6 +927,8 @@ def _pptx_object_from_graphic_frame(zf, rels, el, warnings):
             'source_bytes': None,
             'caption_candidates': [alt_text],
             'object_text': '',
+            'position': geometry,
+            'object_name': alt_text,
             'excluded': True,
             'excluded_reason': f'Unsupported graphic object: {uri or "unknown"}',
         }
@@ -854,10 +939,12 @@ def _build_pptx_evidence(src, output_dir):
     units, actuals, warnings = [], [], []
     rel_cache = {}
 
-    def walk_slide_nodes(zf, slide_name, rels, nodes, sid, slide_title, counters):
+    def walk_slide_nodes(zf, slide_name, rels, nodes, sid, slide_title, counters, slide_size):
         for node in nodes:
             if node.tag == P + 'grpSp':
-                walk_slide_nodes(zf, slide_name, rels, list(node), sid, slide_title, counters)
+                walk_slide_nodes(
+                    zf, slide_name, rels, list(node), sid, slide_title, counters, slide_size
+                )
                 continue
             if node.tag in (P + 'sp', P + 'cxnSp'):
                 text = _clean(_pptx_shape_text(node))
@@ -866,10 +953,14 @@ def _build_pptx_evidence(src, output_dir):
                     continue
                 counters['shape'] += 1
                 anchor = f'[S{sid:02d}-{counters["shape"]}]'
+                cnvpr = _pptx_shape_cnvpr(node)
+                object_name = _object_name(cnvpr)
+                geometry = _pptx_shape_geometry(node, slide_size)
                 order = len(units) + 1
                 units.append(_unit_record(
                     order, anchor, 'shape', text, [slide_title] if slide_title else [],
                     slide_name, slide=sid, shape=counters['shape'],
+                    position=geometry, object_name=object_name, object_type=ph_type or 'shape',
                 ))
                 if not text and ph_type in ('pic', 'chart', 'media', 'obj'):
                     kind = {'pic': 'image_placeholder', 'chart': 'chart_placeholder'}.get(ph_type, 'placeholder')
@@ -878,8 +969,10 @@ def _build_pptx_evidence(src, output_dir):
                         anchor,
                         order,
                         [slide_title] if slide_title else [],
-                        {'page': None, 'slide': sid, 'shape': counters['shape'], 'placeholder_type': ph_type},
+                        {'page': sid, 'slide': sid, 'shape': counters['shape'], 'placeholder_type': ph_type},
                         caption_candidates=[],
+                        position=geometry,
+                        object_name=object_name,
                         excluded=True,
                         excluded_reason=f'Placeholder type "{ph_type}" has no embedded object',
                     ))
@@ -887,17 +980,13 @@ def _build_pptx_evidence(src, output_dir):
                 counters['shape'] += 1
                 anchor = f'[S{sid:02d}-{counters["shape"]}]'
                 cnvpr = _pptx_shape_cnvpr(node)
-                alt_text = _clean(' '.join(
-                    value for value in (
-                        cnvpr.get('name', '') if cnvpr is not None else '',
-                        cnvpr.get('descr', '') if cnvpr is not None else '',
-                        cnvpr.get('title', '') if cnvpr is not None else '',
-                    ) if value
-                ))
+                alt_text = _object_name(cnvpr)
+                geometry = _pptx_shape_geometry(node, slide_size)
                 order = len(units) + 1
                 units.append(_unit_record(
                     order, anchor, 'image', alt_text, [slide_title] if slide_title else [],
                     slide_name, slide=sid, shape=counters['shape'],
+                    position=geometry, object_name=alt_text, object_type='image',
                 ))
                 blip = node.find('.//' + A + 'blip')
                 rid = blip.get(R + 'embed') if blip is not None else None
@@ -909,15 +998,17 @@ def _build_pptx_evidence(src, output_dir):
                     anchor,
                     order,
                     [slide_title] if slide_title else [],
-                    {'page': None, 'slide': sid, 'shape': counters['shape'], 'placeholder_type': None},
+                    {'page': sid, 'slide': sid, 'shape': counters['shape'], 'placeholder_type': None},
                     source_path=source_path,
                     source_bytes=source_bytes,
                     caption_candidates=[alt_text],
+                    position=geometry,
+                    object_name=alt_text,
                     excluded=source_bytes is None,
                     excluded_reason=None if source_bytes is not None else 'Picture relationship missing or unreadable',
                 ))
             elif node.tag == P + 'graphicFrame':
-                info = _pptx_object_from_graphic_frame(zf, rels, node, warnings)
+                info = _pptx_object_from_graphic_frame(zf, rels, node, warnings, slide_size)
                 if 'table_rows' in info:
                     rows = info['table_rows']
                     if not rows:
@@ -930,6 +1021,9 @@ def _build_pptx_evidence(src, output_dir):
                         ' / '.join(' | '.join(cell for cell in row if cell) for row in rows),
                         [slide_title] if slide_title else [], slide_name,
                         slide=sid, table=counters['table'], rows=rows,
+                        position=_pptx_shape_geometry(node, slide_size),
+                        object_name=_object_name(_pptx_shape_cnvpr(node)),
+                        object_type='table',
                     ))
                 else:
                     counters['shape'] += 1
@@ -940,22 +1034,28 @@ def _build_pptx_evidence(src, output_dir):
                     units.append(_unit_record(
                         order, anchor, 'object', text, [slide_title] if slide_title else [],
                         slide_name, slide=sid, shape=counters['shape'],
+                        position=actual.get('position'),
+                        object_name=actual.get('object_name'),
+                        object_type=actual.get('kind'),
                     ))
                     actuals.append(_actual_record(
                         actual['kind'],
                         anchor,
                         order,
                         [slide_title] if slide_title else [],
-                        {'page': None, 'slide': sid, 'shape': counters['shape'], 'placeholder_type': None},
+                        {'page': sid, 'slide': sid, 'shape': counters['shape'], 'placeholder_type': None},
                         source_path=actual.get('source_path'),
                         source_bytes=actual.get('source_bytes'),
                         caption_candidates=actual.get('caption_candidates'),
                         object_text=actual.get('object_text', ''),
+                        position=actual.get('position'),
+                        object_name=actual.get('object_name'),
                         excluded=actual.get('excluded', False),
                         excluded_reason=actual.get('excluded_reason'),
                     ))
 
     with zipfile.ZipFile(src) as zf:
+        slide_size = _pptx_slide_size(zf)
         slide_names = sorted(
             [name for name in zf.namelist() if re.match(r'ppt/slides/slide\d+\.xml$', name)],
             key=lambda x: int(re.search(r'slide(\d+)\.xml$', x).group(1)),
@@ -982,7 +1082,9 @@ def _build_pptx_evidence(src, output_dir):
             ))
             rels = _load_relationships(zf, slide_name, rel_cache)
             counters = {'shape': 0, 'table': 0}
-            walk_slide_nodes(zf, slide_name, rels, list(sp_tree), sid, slide_title, counters)
+            walk_slide_nodes(
+                zf, slide_name, rels, list(sp_tree), sid, slide_title, counters, slide_size
+            )
             notes = _pptx_notes(zf, slide_name, rel_cache)
             if notes:
                 note_anchor = f'[S{sid:02d}-N]'
@@ -990,7 +1092,7 @@ def _build_pptx_evidence(src, output_dir):
                     len(units) + 1, note_anchor, 'notes', notes, [slide_title] if slide_title else [],
                     slide_name, slide=sid,
                 ))
-    return {'units': units, 'actuals': actuals, 'warnings': warnings}
+    return {'units': units, 'actuals': actuals, 'warnings': warnings, 'slide_size': slide_size}
 
 
 def _apply_neighbor_context(units):
@@ -1136,6 +1238,213 @@ def _actual_scope(actual):
     if actual.get('section_context'):
         return ('section', tuple(actual['section_context']))
     return ('document', 1)
+
+
+_LOCATION_OBJECT_LABELS = {
+    'chart': '图表',
+    'chart_placeholder': '图表占位符',
+    'image': '图片',
+    'image_placeholder': '图片占位符',
+    'smartart': 'SmartArt',
+    'object': '图形对象',
+    'object_placeholder': '图形对象占位符',
+    'table': '表格',
+    'shape': '形状',
+    'slide': '页面',
+    'notes': '备注',
+}
+
+
+def _location_anchor_id(anchor):
+    token = re.sub(r'[^0-9A-Za-z_-]+', '-', str(anchor or '').strip('[]'))
+    return f'location-{token or "unknown"}'
+
+
+def _position_summary(position):
+    relative = (position or {}).get('relative') if isinstance(position, dict) else None
+    if not relative:
+        return ''
+    left = relative.get('left_percent')
+    top = relative.get('top_percent')
+    width = relative.get('width_percent')
+    height = relative.get('height_percent')
+    parts = []
+    if left is not None:
+        parts.append(f'左侧 {left:g}%')
+    if top is not None:
+        parts.append(f'上方 {top:g}%')
+    if width is not None and height is not None:
+        parts.append(f'尺寸 {width:g}%×{height:g}%')
+    return ' · '.join(parts)
+
+
+def _location_display(source_type, anchor, page=None, page_status='unavailable',
+                      paragraph=None, table=None, slide=None, shape=None,
+                      object_type=None, section_context=None, position_summary=''):
+    label = _LOCATION_OBJECT_LABELS.get(object_type or '', object_type or '')
+    parts = []
+    if source_type == 'pptx':
+        if slide is not None:
+            parts.append(f'第 {slide} 页')
+        if table is not None:
+            parts.append(f'第 {table} 个表格')
+        elif shape is not None:
+            parts.append(f'第 {shape} 个形状')
+        if label and label not in {'页面', '形状'}:
+            parts.append(f'（{label}）')
+        if position_summary:
+            parts.append(position_summary)
+    else:
+        if page is not None:
+            parts.append(f'第 {page} 页')
+        elif page_status != 'resolved':
+            parts.append('页码未解析')
+        if paragraph is not None:
+            parts.append(f'第 {paragraph} 个段落')
+        if table is not None:
+            parts.append(f'第 {table} 个表格')
+        if section_context:
+            parts.append(f'章节：{" / ".join(section_context[-2:])}')
+    parts.append(anchor or '[?]')
+    return ' · '.join(parts)
+
+
+def _location_detail(src, output_dir, anchor, source_type, part, section_context,
+                     page_info=None, slide=None, shape=None, table=None,
+                     position=None, object_name=None, object_type=None,
+                     paragraph=None, page_label=None):
+    page_info = page_info or {}
+    page = page_info.get('pages', {}).get(anchor)
+    page_status = 'resolved' if page is not None else 'unavailable'
+    if source_type == 'pptx':
+        page = slide
+        page_status = 'known'
+        page_label = 'slide'
+    position_summary = _position_summary(position)
+    detail = {
+        'schema_version': 'location.v1',
+        'source_type': source_type,
+        'source_file': os.path.abspath(src),
+        'source_anchor': anchor,
+        'document_part': part,
+        'section_context': list(section_context or []),
+        'page': page,
+        'page_status': page_status,
+        'page_method': page_info.get('method') if source_type == 'docx' else 'slide-number',
+        'page_label': page_label or 'page',
+        'paragraph': paragraph,
+        'table': table,
+        'slide': slide,
+        'shape': shape,
+        'object_type': object_type,
+        'object_name': object_name,
+        'position': position,
+        'position_summary': position_summary,
+        'evidence_path': os.path.abspath(os.path.join(output_dir, 'evidence.html')),
+        'evidence_anchor': _location_anchor_id(anchor),
+    }
+    detail['display'] = _location_display(
+        source_type,
+        anchor,
+        page=page,
+        page_status=page_status,
+        paragraph=paragraph,
+        table=table,
+        slide=slide,
+        shape=shape,
+        object_type=object_type,
+        section_context=section_context,
+        position_summary=position_summary,
+    )
+    if page_status == 'unavailable':
+        detail['page_note'] = 'DOCX 页码需要 Word/LibreOffice 解析；当前未获得真实页码，未猜测。'
+    return detail
+
+
+def _anchor_parts(anchor):
+    if not anchor:
+        return {}
+    text = str(anchor)
+    paragraph = re.match(r'^\[P(\d+)\]$', text)
+    if paragraph:
+        return {'paragraph': int(paragraph.group(1))}
+    table = re.match(r'^\[T(\d+)\]$', text)
+    if table:
+        return {'table': int(table.group(1))}
+    ppt = re.match(r'^\[S(\d+)(?:-([A-Za-z]+)(\d+))?\]$', text)
+    if ppt:
+        result = {'slide': int(ppt.group(1))}
+        if ppt.group(2) == 'T':
+            result['table'] = int(ppt.group(3))
+        elif ppt.group(2):
+            result['shape'] = int(ppt.group(3))
+        return result
+    return {}
+
+
+def _attach_location_details(src, output_dir, source_type, units, actuals, page_info=None):
+    by_anchor = {}
+    for unit in units:
+        parts = _anchor_parts(unit.get('anchor'))
+        detail = _location_detail(
+            src,
+            output_dir,
+            unit.get('anchor'),
+            source_type,
+            unit.get('part'),
+            unit.get('section_context'),
+            page_info=page_info,
+            slide=unit.get('slide') or parts.get('slide'),
+            shape=unit.get('shape') or parts.get('shape'),
+            table=unit.get('table') or parts.get('table'),
+            position=unit.get('position'),
+            object_name=unit.get('object_name'),
+            object_type=unit.get('object_type') or unit.get('kind'),
+            paragraph=parts.get('paragraph'),
+        )
+        unit['location_detail'] = detail
+        by_anchor[unit.get('anchor')] = detail
+
+    for actual in actuals:
+        anchor = actual.get('source_anchor')
+        base = dict(by_anchor.get(anchor) or {})
+        placement = actual.get('placement') or {}
+        parts = _anchor_parts(anchor)
+        if not base:
+            base = _location_detail(
+                src,
+                output_dir,
+                anchor,
+                source_type,
+                None,
+                actual.get('section_context'),
+                page_info=page_info,
+                slide=placement.get('slide') or parts.get('slide'),
+                shape=placement.get('shape') or parts.get('shape'),
+                table=placement.get('table') or parts.get('table'),
+            )
+        base.update({
+            'object_type': actual.get('object_type') or actual.get('kind') or base.get('object_type'),
+            'object_name': actual.get('object_name') or base.get('object_name'),
+            'position': actual.get('position') or base.get('position'),
+        })
+        base['position_summary'] = _position_summary(base.get('position'))
+        base['display'] = _location_display(
+            source_type,
+            base.get('source_anchor'),
+            page=base.get('page'),
+            page_status=base.get('page_status'),
+            paragraph=base.get('paragraph'),
+            table=base.get('table'),
+            slide=base.get('slide'),
+            shape=base.get('shape'),
+            object_type=base.get('object_type'),
+            section_context=base.get('section_context'),
+            position_summary=base.get('position_summary'),
+        )
+        base['actual_id'] = actual.get('id')
+        actual['location_detail'] = base
+    return by_anchor
 
 
 def _add_expected_group(groups, key, source_type, unit, figure_id=None, normalized_id=None, required=True,
@@ -1372,11 +1681,37 @@ def _finalize_actual(actual_figures):
         actual.pop('_source_order', None)
 
 
-def build_evidence(src, output_dir):
+def _attach_expected_location_details(expected_figures, by_anchor):
+    for item in expected_figures:
+        details = [
+            by_anchor[anchor]
+            for anchor in item.get('source_anchors') or []
+            if anchor in by_anchor
+        ]
+        item['location_details'] = _dedupe_keep_order(details)
+        if len(details) == 1:
+            item['location_detail'] = details[0]
+        elif details:
+            item['location_detail'] = details
+
+
+def build_evidence(src, output_dir, page_map_path=None, resolve_pages=False):
     ext = os.path.splitext(src)[1].lower()
+    page_info = {
+        'pages': {},
+        'method': 'unavailable',
+        'status': 'unavailable',
+        'warnings': [],
+    }
     if ext == '.docx':
         parsed = _build_docx_evidence(src, output_dir)
         source_type = 'docx'
+        page_info = resolve_docx_pages(
+            src,
+            parsed['units'],
+            page_map_path=page_map_path,
+            use_word=resolve_pages,
+        )
     elif ext == '.pptx':
         parsed = _build_pptx_evidence(src, output_dir)
         source_type = 'pptx'
@@ -1385,11 +1720,22 @@ def build_evidence(src, output_dir):
     units = parsed['units']
     actuals = parsed['actuals']
     warnings = parsed['warnings']
+    for message in page_info.get('warnings') or []:
+        _warning(warnings, 'page_resolution', message, source_path=src)
     _apply_neighbor_context(units)
     _attach_actual_context(units, actuals)
     _mark_non_figure_assets(actuals)
     _write_artifacts(output_dir, actuals)
+    location_by_anchor = _attach_location_details(
+        src,
+        output_dir,
+        source_type,
+        units,
+        actuals,
+        page_info=page_info,
+    )
     expected = _derive_expected_figures(units)
+    _attach_expected_location_details(expected, location_by_anchor)
     matches = _build_matches(expected, actuals)
     _finalize_expected(expected, matches)
     _finalize_actual(actuals)
@@ -1406,6 +1752,9 @@ def build_evidence(src, output_dir):
             'expected_figure_count': len(expected),
             'actual_figure_count': len(actuals),
             'match_count': len(matches),
+            'location_schema_version': 'location.v1',
+            'page_resolution': page_info,
+            'evidence_viewer_path': os.path.abspath(os.path.join(output_dir, 'evidence.html')),
         },
         'units': units,
         'expected_figures': expected,
@@ -1429,6 +1778,15 @@ def main(argv=None):
         '--output-json',
         help='输出 JSON 路径；默认写入 <output-dir>\\evidence.json',
     )
+    parser.add_argument(
+        '--page-map',
+        help='可选 DOCX 页码映射 JSON（格式：{"[P0001]": 2, "[T01]": 3}）',
+    )
+    parser.add_argument(
+        '--resolve-pages',
+        action='store_true',
+        help='尝试通过可用的 Microsoft Word COM 解析 DOCX 真实页码',
+    )
     args = parser.parse_args(argv)
 
     src = os.path.abspath(args.source)
@@ -1437,10 +1795,20 @@ def main(argv=None):
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(output_json), exist_ok=True)
 
-    evidence = build_evidence(src, output_dir)
+    evidence = build_evidence(
+        src,
+        output_dir,
+        page_map_path=args.page_map,
+        resolve_pages=args.resolve_pages,
+    )
     with open(output_json, 'w', encoding='utf-8') as f:
         json.dump(evidence, f, ensure_ascii=False, indent=2, sort_keys=True)
         f.write('\n')
+    from render_evidence import write_evidence_html
+    evidence_viewer = write_evidence_html(
+        output_json,
+        os.path.join(output_dir, 'evidence.html'),
+    )
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
@@ -1450,7 +1818,8 @@ def main(argv=None):
         f"(units={evidence['document']['unit_count']}, "
         f"expected={evidence['document']['expected_figure_count']}, "
         f"actual={evidence['document']['actual_figure_count']}, "
-        f"warnings={len(evidence['extraction_warnings'])})"
+        f"warnings={len(evidence['extraction_warnings'])}, "
+        f"viewer={evidence_viewer})"
     )
 
 

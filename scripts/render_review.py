@@ -127,6 +127,9 @@ tr.sev-manual td { background: var(--man-bg); }
 .wide-table table { min-width: 1600px; }
 .text { white-space: pre-wrap; word-break: break-word; }
 .mono { font-family: Consolas, "Courier New", monospace; }
+.location-display { font-weight: 600; }
+.location-links { margin-top: 4px; font-size: 12px; }
+.location-links a { margin-right: 10px; white-space: nowrap; }
 .muted { color: var(--muted); }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
          font-weight: 700; white-space: nowrap; }
@@ -291,14 +294,21 @@ def _safe_href(target: str) -> str:
     text = target.strip()
     if not text:
         return ""
+    fragment = ""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text) and "#" in text:
+        text, fragment = text.split("#", 1)
     if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", text):
-        return quote(text, safe=":/?#[]@!$&'()*+,;=%-._~")
+        href = quote(text, safe=":/?#[]@!$&'()*+,;=%-._~")
+        return href + (f"#{quote(fragment, safe='-._~')}" if fragment else "")
     if re.match(r"^[A-Za-z]:[\\/]", text):
-        return "file:///" + quote(text.replace("\\", "/"), safe=":/!$&'()*+,;=%-._~")
+        href = "file:///" + quote(text.replace("\\", "/"), safe=":/!$&'()*+,;=%-._~")
+        return href + (f"#{quote(fragment, safe='-._~')}" if fragment else "")
     if text.startswith("\\\\"):
-        return "file://" + quote(text.replace("\\", "/"), safe=":/!$&'()*+,;=%-._~")
+        href = "file://" + quote(text.replace("\\", "/"), safe=":/!$&'()*+,;=%-._~")
+        return href + (f"#{quote(fragment, safe='-._~')}" if fragment else "")
     if any(ch in text for ch in (":", "\\", "/")):
-        return quote(text.replace("\\", "/"), safe="/!$&'()*+,;=%-._~")
+        href = quote(text.replace("\\", "/"), safe="/!$&'()*+,;=%-._~")
+        return href + (f"#{quote(fragment, safe='-._~')}" if fragment else "")
     return ""
 
 
@@ -314,6 +324,70 @@ def _render_link_cell(value) -> str:
         '<div class="text"><a class="mono" href="{0}">{1}</a></div>'
         .format(_escape(href), shown)
     )
+
+
+def _location_details(item):
+    if not isinstance(item, dict):
+        return []
+    details = item.get("location_details") or item.get("location_detail")
+    if isinstance(details, dict):
+        return [details]
+    if isinstance(details, list):
+        return [detail for detail in details if isinstance(detail, dict)]
+    return []
+
+
+def _render_location(item, base_dir=None) -> str:
+    details = _location_details(item)
+    if not details:
+        value = item.get("location_display") or item.get("location")
+        return _render_text(value)
+
+    rendered = []
+    for detail in details:
+        display = detail.get("display") or detail.get("source_anchor") or "[?]"
+        links = []
+        source_target = detail.get("source_href") or detail.get("source_file")
+        if source_target:
+            href = _safe_href(str(source_target))
+            if href:
+                links.append(f'<a href="{_escape(href)}">打开原文件</a>')
+        evidence_target = detail.get("evidence_href")
+        if not evidence_target:
+            evidence_path = detail.get("evidence_path")
+            if evidence_path and not os.path.isabs(str(evidence_path)) and base_dir:
+                evidence_path = os.path.join(base_dir, str(evidence_path))
+            if evidence_path:
+                evidence_target = f"{evidence_path}#{detail.get('evidence_anchor') or ''}"
+        if evidence_target:
+            href = _safe_href(str(evidence_target))
+            if href:
+                links.append(f'<a href="{_escape(href)}">打开证据定位</a>')
+        note = detail.get("page_note")
+        rendered.append(
+            '<div class="location"><div class="location-display">{display}</div>{links}{note}</div>'.format(
+                display=_escape(display),
+                links=(
+                    '<div class="location-links">' + " ".join(links) + "</div>"
+                    if links else ""
+                ),
+                note=(
+                    f'<div class="muted">{_escape(note)}</div>'
+                    if note else ""
+                ),
+            )
+        )
+    return "".join(rendered)
+
+
+def _location_display_text(item):
+    details = _location_details(item)
+    if details:
+        return " / ".join(
+            str(detail.get("display") or detail.get("source_anchor") or "[?]")
+            for detail in details
+        )
+    return _single_line(item.get("location_display") or item.get("location")) or "位置未提供"
 
 
 def _table(headers, rows, classes=None, wide=False):
@@ -374,7 +448,7 @@ def _summary_counts(data):
     return _issue_counts(items)
 
 
-def _issue_row(issue, index):
+def _issue_row(issue, index, base_dir=None):
     item = issue if isinstance(issue, dict) else {"problem": issue}
     row = []
     for key, _label in ISSUE_FIELDS:
@@ -383,10 +457,12 @@ def _issue_row(issue, index):
             row.append(_render_severity(value))
         elif key in ("technical_meaning_changed", "requires_author_confirmation"):
             row.append(_render_boolish(value))
+        elif key == "location":
+            row.append(_render_location(item, base_dir))
         else:
             row.append(_render_text(value))
     issue_id = item.get("issue_id") or f"ISSUE-{index:03d}"
-    location = _single_line(item.get("location")) or "位置未提供"
+    location = _location_display_text(item)
     category = _single_line(item.get("category")) or "未分类"
     title = (
         f"{_severity_badge(item.get('severity'))} "
@@ -400,6 +476,8 @@ def _issue_row(issue, index):
             rendered = _render_severity(value)
         elif key in ("technical_meaning_changed", "requires_author_confirmation"):
             rendered = _render_boolish(value)
+        elif key == "location":
+            rendered = _render_location(item, base_dir)
         else:
             rendered = _render_text(value)
         details.append(f"<dt>{_escape(label)}</dt><dd>{rendered}</dd>")
@@ -407,14 +485,14 @@ def _issue_row(issue, index):
     return row, details
 
 
-def _render_issues(issues) -> str:
+def _render_issues(issues, base_dir=None) -> str:
     if not isinstance(issues, list) or not issues:
         return '<p class="empty">无</p>'
     rows = []
     classes = []
     details = []
     for idx, issue in enumerate(issues, 1):
-        row, detail = _issue_row(issue, idx)
+        row, detail = _issue_row(issue, idx, base_dir)
         rows.append(row)
         classes.append(_severity_class(issue.get("severity") if isinstance(issue, dict) else ""))
         details.extend(detail)
@@ -422,7 +500,7 @@ def _render_issues(issues) -> str:
     return table_html + "<h3>逐项详情</h3>" + "".join(details)
 
 
-def _render_language_findings(findings) -> str:
+def _render_language_findings(findings, base_dir=None) -> str:
     if not isinstance(findings, list) or not findings:
         return '<p class="empty">无</p>'
     headers = [
@@ -437,7 +515,7 @@ def _render_language_findings(findings) -> str:
             _render_text(item.get("finding_id") or item.get("id") or f"LANG-{idx:03d}"),
             _render_severity(item.get("severity")),
             _render_text(item.get("confidence")),
-            _render_text(item.get("location")),
+            _render_location(item, base_dir),
             _render_text(item.get("source_text") or item.get("original") or item.get("actual")),
             _render_text(item.get("suggestion") or item.get("suggested_text") or item.get("expected")),
             _render_text(item.get("reason") or item.get("problem") or item.get("note")),
@@ -450,7 +528,7 @@ def _render_language_findings(findings) -> str:
     return _table(headers, rows, classes=classes)
 
 
-def _render_figure_inventory(items) -> str:
+def _render_figure_inventory(items, base_dir=None) -> str:
     if not isinstance(items, list) or not items:
         return '<p class="empty">无</p>'
     headers = [
@@ -465,7 +543,7 @@ def _render_figure_inventory(items) -> str:
             severity = "manual"
         rows.append([
             _render_text(item.get("figure_id") or item.get("id") or f"FIG-{idx:03d}"),
-            _render_text(item.get("location")),
+            _render_location(item, base_dir),
             _render_text(item.get("expected") or item.get("expected_figure") or item.get("expected_caption")),
             _render_text(item.get("actual") or item.get("actual_figure") or item.get("actual_caption")),
             _render_text(item.get("status") or item.get("result") or item.get("outcome")),
@@ -508,7 +586,7 @@ def _render_trace_artifacts(section) -> str:
     return _table(["工件", "类型/分组", "链接或路径", "说明"], rows)
 
 
-def _checked_rows(section):
+def _checked_rows(section, base_dir=None):
     rows = []
     classes = []
     entries = section.items() if isinstance(section, dict) else enumerate(section or [], 1)
@@ -521,21 +599,25 @@ def _checked_rows(section):
             _render_text(item.get("item") or item.get("check") or item.get("title") or item.get("name") or key),
             _render_text(item.get("result") or item.get("status") or item.get("outcome")),
             _render_text(item.get("note") or item.get("notes") or item.get("comment") or item.get("details")),
-            _render_text(item.get("source") or item.get("location")),
+            (
+                _render_location(item, base_dir)
+                if item.get("location") or item.get("location_detail") or item.get("location_details")
+                else _render_text(item.get("source"))
+            ),
             _render_boolish(item.get("requires_author_confirmation")),
         ])
         classes.append(_severity_class(severity))
     return rows, classes
 
 
-def _render_checked_items(section) -> str:
-    rows, classes = _checked_rows(section if section is not None else [])
+def _render_checked_items(section, base_dir=None) -> str:
+    rows, classes = _checked_rows(section if section is not None else [], base_dir)
     if not rows:
         return '<p class="empty">无</p>'
     return _table(["核查项", "结果", "备注", "来源", "需作者确认"], rows, classes=classes)
 
 
-def _manual_confirmation_rows(data):
+def _manual_confirmation_rows(data, base_dir=None):
     rows = []
     issues = data.get("issues")
     if isinstance(issues, list):
@@ -549,7 +631,7 @@ def _manual_confirmation_rows(data):
                 rows.append([
                     _render_text("问题"),
                     _render_text(item.get("issue_id") or f"ISSUE-{idx:03d}"),
-                    _render_text(item.get("location")),
+                    _render_location(item, base_dir),
                     _render_text(reason),
                 ])
     checked = data.get("checked_items")
@@ -562,7 +644,11 @@ def _manual_confirmation_rows(data):
             rows.append([
                 _render_text("核查项"),
                 _render_text(item.get("item") or item.get("check") or item.get("title") or item.get("name") or key),
-                _render_text(item.get("location") or item.get("source")),
+                (
+                    _render_location(item, base_dir)
+                    if item.get("location") or item.get("location_detail") or item.get("location_details")
+                    else _render_text(item.get("source"))
+                ),
                 _render_text(item.get("note") or item.get("notes") or item.get("comment") or item.get("details")),
             ])
     figures = data.get("figure_inventory")
@@ -575,26 +661,26 @@ def _manual_confirmation_rows(data):
                 rows.append([
                     _render_text("图表盘点"),
                     _render_text(item.get("figure_id") or item.get("id") or f"FIG-{idx:03d}"),
-                    _render_text(item.get("location")),
+                    _render_location(item, base_dir),
                     _render_text(item.get("note") or item.get("notes") or item.get("problem")),
                 ])
     return rows
 
 
-def _render_manual_confirmation(data) -> str:
-    rows = _manual_confirmation_rows(data)
+def _render_manual_confirmation(data, base_dir=None) -> str:
+    rows = _manual_confirmation_rows(data, base_dir)
     if not rows:
         return '<p class="empty">无</p>'
     return _table(["来源", "标识", "位置", "需确认原因"], rows)
 
 
-def _stats_html(data):
+def _stats_html(data, base_dir=None):
     counts = _summary_counts(data)
     summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
     total = sum(counts.values())
     if isinstance(summary.get("issue_count"), int):
         total = summary["issue_count"]
-    manual_items = len(_manual_confirmation_rows(data))
+    manual_items = len(_manual_confirmation_rows(data, base_dir))
     cards = []
     for severity in SEVERITY_ORDER:
         cards.append(
@@ -630,7 +716,7 @@ def _default_output_path(src: str) -> str:
     return src + ".review.html"
 
 
-def render_html(data: dict, title: str, source_name: str = "") -> str:
+def render_html(data: dict, title: str, source_name: str = "", base_dir=None) -> str:
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     body = [
         f"<h1>{_escape(title)}</h1>",
@@ -642,19 +728,19 @@ def render_html(data: dict, title: str, source_name: str = "") -> str:
         "<h2>证据摘要</h2>",
         _kv_table(data.get("evidence_summary")),
         "<h2>问题统计</h2>",
-        _stats_html(data),
+        _stats_html(data, base_dir),
         "<h2>问题明细</h2>",
-        _render_issues(data.get("issues")),
+        _render_issues(data.get("issues"), base_dir),
         "<h2>语言建议</h2>",
-        _render_language_findings(data.get("language_findings")),
+        _render_language_findings(data.get("language_findings"), base_dir),
         "<h2>图表盘点（预期 vs 实际）</h2>",
-        _render_figure_inventory(data.get("figure_inventory")),
+        _render_figure_inventory(data.get("figure_inventory"), base_dir),
         "<h2>人工确认项</h2>",
-        _render_manual_confirmation(data),
+        _render_manual_confirmation(data, base_dir),
         "<h2>追溯工件</h2>",
         _render_trace_artifacts(data.get("trace_artifacts")),
         "<h2>已核查项</h2>",
-        _render_checked_items(data.get("checked_items")),
+        _render_checked_items(data.get("checked_items"), base_dir),
         '<div class="footer">由 render_review.py 生成 · {0} · 源文件：{1} · AI 辅助审核，结果需工程师复核确认</div>'.format(
             _escape(now), _escape(source_name or "无")
         ),
@@ -804,7 +890,7 @@ def main(argv=None):
     data = _load_json(args.input)
     title = _default_title(args.input, data, args.title)
     output_path = args.output or _default_output_path(args.input)
-    page = render_html(data, title, args.input)
+    page = render_html(data, title, args.input, os.path.dirname(os.path.abspath(output_path)))
     _write_text(output_path, page)
     print(f"OK: {output_path}")
     return 0
